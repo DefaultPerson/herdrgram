@@ -165,6 +165,7 @@ modules:
       - ccgram.state_persistence
       - ccgram.monitor_events
       - ccgram.monitor_state
+      - ccgram.topic_titles
       - ccgram.event_stream_monitor # supervises multiplexer.watch_events → agent_status_cache / death
     layer: core
     owner: alexei-led

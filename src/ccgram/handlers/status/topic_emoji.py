@@ -6,6 +6,12 @@ Updates topic names with status emoji prefixes to reflect session state:
   - Done (Claude exited): topic name prefixed with done emoji
   - Dead (window gone): topic name prefixed with dead emoji
 
+The title a topic already carries is tracked in ``topic_titles`` (a small
+JSON record under ``$CCGRAM_DIR``) as well as in memory: Telegram posts a
+"topic renamed" service message even when the new title equals the old one,
+and the in-memory cache is empty in a fresh process, so without the record
+every restart renamed every bound topic to the name it already had.
+
 Tracks per-topic state to avoid redundant API calls. Debounces transitions
 to prevent rapid active/idle toggling from flooding the chat with rename
 messages. Spaces renames of different topics in a chat by a minimum
@@ -34,6 +40,7 @@ from telegram.error import BadRequest, RetryAfter, TelegramError
 
 from ...config import config
 from ...telegram_client import TelegramClient
+from ... import topic_titles
 from ...telegram_rate_limiter import retry_after_seconds
 from ...thread_router import thread_router
 from ...topic_state_registry import topic_state
@@ -175,18 +182,32 @@ def _paced_out(chat_id: int, key: tuple[int, int], now: float) -> bool:
     return last_key != key and now - last_ts < CHAT_EDIT_MIN_INTERVAL
 
 
-def _resolve_topic_name(key: tuple[int, int], display_name: str) -> tuple[str, bool]:
+def _resolve_topic_name(
+    key: tuple[int, int],
+    display_name: str,
+    *,
+    would_be_title: str | None = None,
+) -> tuple[str, bool]:
     """Return the clean topic name and whether it changed.
 
     On first call, strips emoji and stores the clean name. On subsequent calls,
     if the incoming display_name (stripped) differs from the stored name,
     overwrites the cache so tmux renames propagate to Telegram.
+
+    The cache is empty in a fresh process, so the first call after a restart
+    reported "changed" for a name nobody had touched. ``would_be_title`` is the
+    title this update would send: when it matches the title recorded on disk
+    for this topic, the topic already carries it and the miss is answered as
+    unchanged. A topic ccgram has no record for — one bound before it kept the
+    record — keeps the old answer: send once, and from then on it has one.
     """
     clean = strip_emoji_prefix(display_name)
     cached = _topic_names.get(key)
     if cached is None:
         _topic_names[key] = clean
-        return clean, True
+        if would_be_title is None:
+            return clean, True
+        return clean, topic_titles.get_title(*key) != would_be_title
     if cached != clean:
         _topic_names[key] = clean
         return clean, True
@@ -298,6 +319,7 @@ async def _edit_topic_name(
             message_thread_id=thread_id,
             name=new_name,
         )
+        topic_titles.remember_title(chat_id, thread_id, new_name)
         if state_token is not None:
             _topic_states[key] = state_token
         logger.debug(
@@ -327,9 +349,13 @@ async def _edit_topic_name(
                 "Topic emoji disabled for chat %d: insufficient permissions",
                 chat_id,
             )
-        elif (
-            "topic_not_modified" in e.message.lower() or "Topic_id_invalid" in e.message
-        ):
+        elif "topic_not_modified" in e.message.lower():
+            # Telegram confirming the topic already carries this title is as
+            # good a source for the record as a successful rename.
+            topic_titles.remember_title(chat_id, thread_id, new_name)
+            if state_token is not None:
+                _topic_states[key] = state_token
+        elif "Topic_id_invalid" in e.message:
             if state_token is not None:
                 _topic_states[key] = state_token
         else:
@@ -452,12 +478,21 @@ async def update_topic_emoji(
         return
 
     key = (chat_id, thread_id)
-    prev_name = _topic_names.get(key)
-    clean_name, name_changed = _resolve_topic_name(key, display_name)
-
     approval_mode = _resolve_approval_mode(chat_id, thread_id)
     rc_active = _resolve_rc_mode(chat_id, thread_id)
     state_token = (state, approval_mode, rc_active)
+
+    # Composed before the name is resolved, because resolving a cache miss
+    # needs the title this update would send to compare against the record.
+    clean_name = strip_emoji_prefix(display_name)
+    new_name = _compose_topic_name(
+        clean_name,
+        state=state,
+        approval_mode=approval_mode,
+        rc_active=rc_active,
+    )
+    prev_name = _topic_names.get(key)
+    _, name_changed = _resolve_topic_name(key, display_name, would_be_title=new_name)
 
     emoji = _state_emoji_map().get(state, "")
     if not emoji:
@@ -475,6 +510,13 @@ async def update_topic_emoji(
         name_changed=name_changed,
         now=now,
     ):
+        return
+    if topic_titles.get_title(chat_id, thread_id) == new_name:
+        # The topic already carries this exact title. Telegram posts a "topic
+        # renamed" service message for a rename to the same name, so sending it
+        # is pure noise — this is the no-op each restart used to produce once
+        # per topic. The state counts as applied: the title displays it.
+        _topic_states[key] = state_token
         return
     if _paced_out(chat_id, key, now):
         # A different topic of this chat was renamed moments ago: defer to
@@ -496,13 +538,6 @@ async def update_topic_emoji(
                 _topic_names[key] = prev_name
         return
     _last_chat_edit[chat_id] = (now, key)
-
-    new_name = _compose_topic_name(
-        clean_name,
-        state=state,
-        approval_mode=approval_mode,
-        rc_active=rc_active,
-    )
     await _edit_topic_name(
         client,
         chat_id,
@@ -542,6 +577,7 @@ def update_stored_topic_name(chat_id: int, thread_id: int, new_clean_name: str) 
 @topic_state.register("chat")
 def clear_topic_emoji_state(chat_id: int, thread_id: int) -> None:
     """Clear emoji tracking for a topic (called on topic cleanup)."""
+    topic_titles.forget_title(chat_id, thread_id)
     key = (chat_id, thread_id)
     _topic_states.pop(key, None)
     _pending_transitions.pop(key, None)
@@ -571,6 +607,7 @@ def clear_disabled_chat(chat_id: int, _thread_id: int = 0) -> None:
 
 def reset_all_state() -> None:
     """Reset all tracking state (for testing)."""
+    topic_titles.reset_for_testing()
     _topic_states.clear()
     _pending_transitions.clear()
     _awaiting_first_paint.clear()

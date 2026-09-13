@@ -23,6 +23,7 @@ from ...providers import registry as provider_registry
 from ...session import session_manager
 from ...session_map import session_map_sync
 from ...thread_router import thread_router
+from ...topic_titles import remember_title
 from ...multiplexer import multiplexer as tmux_manager
 from ...multiplexer.base import canonical_window_id
 from ..telegram_origin import send_telegram_to_window
@@ -453,12 +454,14 @@ async def launch_window(  # noqa: PLR0912, PLR0915, C901
         return WindowLaunchResult(success=True, window_id=created_wid)
 
     chat_id = thread_router.resolve_chat_id(user_id, pending_thread_id)
+    topic_name = format_topic_name_for_mode(created_wname, approval_mode)
     try:
         await context.bot.edit_forum_topic(
             chat_id=chat_id,
             message_thread_id=pending_thread_id,
-            name=format_topic_name_for_mode(created_wname, approval_mode),
+            name=topic_name,
         )
+        remember_title(chat_id, pending_thread_id, topic_name)
     except TelegramError as e:
         logger.debug("Failed to rename topic: %s", e)
 

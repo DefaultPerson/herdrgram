@@ -799,6 +799,7 @@ All state files live in `$CCGRAM_DIR` (`~/.ccgram/` by default):
 | `session_map.json`   | Hook-generated window → session mappings                            |
 | `events.jsonl`       | Append-only hook event log (read incrementally by monitor)          |
 | `monitor_state.json` | Delivered transcript watermarks and pending Jump-to-live barriers   |
+| `topic_titles.json`  | Title each bound topic carries (suppresses no-op renames)           |
 
 Session transcripts are read from provider-specific locations (read-only): `~/.claude/projects/` (Claude), `~/.codex/sessions/` (Codex), `~/.gemini/tmp/` (Gemini), `~/.pi/agent/sessions/` (Pi). Shell has no transcript — output is captured directly from the tmux pane. The bot never writes to agent data directories; the delivered watermark records relay progress, not a mutation of the raw transcript.
 

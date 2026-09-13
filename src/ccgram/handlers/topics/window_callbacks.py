@@ -20,6 +20,7 @@ from ... import window_query
 from ...telegram_client import PTBTelegramClient, TelegramClient
 from ...session import session_manager
 from ...thread_router import thread_router
+from ...topic_titles import remember_title
 from ...multiplexer import multiplexer as tmux_manager
 from ..telegram_origin import send_telegram_to_window
 from ..callback_data import CB_WIN_BIND, CB_WIN_CANCEL, CB_WIN_NEW
@@ -67,14 +68,16 @@ async def _rename_forum_topic(
     client: TelegramClient, chat_id: int, thread_id: int, display: str, window_id: str
 ) -> None:
     """Rename a topic in either a forum or a private topic chat."""
+    name = format_topic_name_for_mode(
+        display, window_query.get_approval_mode(window_id)
+    )
     try:
         await client.edit_forum_topic(
             chat_id=chat_id,
             message_thread_id=thread_id,
-            name=format_topic_name_for_mode(
-                display, window_query.get_approval_mode(window_id)
-            ),
+            name=name,
         )
+        remember_title(chat_id, thread_id, name)
     except TelegramError as exc:
         logger.debug("Failed to rename topic: %s", exc)
 

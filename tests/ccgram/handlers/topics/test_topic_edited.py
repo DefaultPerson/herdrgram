@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ccgram import topic_titles
 from ccgram.handlers.status.topic_emoji import _topic_names, reset_all_state
 from ccgram.handlers.topics.topic_lifecycle import topic_edited_handler
 
@@ -195,3 +196,50 @@ class TestMuxRenameFromTelegramDefault:
         await topic_edited_handler(_make_update("new-name"), MagicMock())
 
         mux.rename_window.assert_called_once_with("@0", "new-name")
+
+
+class TestTopicEditedRecordsTheTitle:
+    """Whoever typed it, that is the title the topic now carries.
+
+    The record is what lets a later status update skip a rename to the title
+    the topic already has. Leaving a hand-typed title out of it would make the
+    record stale, and a multiplexer rename back to the previous name would
+    then be read as a no-op and dropped.
+    """
+
+    @pytest.fixture
+    def _one_way(self, monkeypatch):
+        from ccgram.config import config
+
+        monkeypatch.setattr(config, "mux_rename_from_telegram", False)
+        yield
+
+    async def test_a_hand_typed_title_is_recorded_verbatim(
+        self, mux: MagicMock, router: MagicMock, session: MagicMock
+    ) -> None:
+        router.get_window_for_chat_thread.return_value = "@0"
+        router.get_display_name.return_value = "old-name"
+
+        await topic_edited_handler(_make_update("\U0001f7e2 new-name"), MagicMock())
+
+        assert topic_titles.get_title(CHAT_ID, THREAD_ID) == "\U0001f7e2 new-name"
+
+    async def test_it_is_recorded_even_when_the_push_is_dropped(
+        self, _one_way, mux: MagicMock, router: MagicMock, session: MagicMock
+    ) -> None:
+        router.get_window_for_chat_thread.return_value = "herdr-session-v1-abc"
+        router.get_display_name.return_value = "2"
+
+        await topic_edited_handler(_make_update("mine"), MagicMock())
+
+        mux.rename_window.assert_not_called()
+        assert topic_titles.get_title(CHAT_ID, THREAD_ID) == "mine"
+
+    async def test_an_unbound_topic_is_not_recorded(
+        self, mux: MagicMock, router: MagicMock
+    ) -> None:
+        router.get_window_for_chat_thread.return_value = None
+
+        await topic_edited_handler(_make_update("mine"), MagicMock())
+
+        assert topic_titles.get_title(CHAT_ID, THREAD_ID) is None

@@ -45,6 +45,7 @@ from ...session import session_manager
 from ...session_map import session_map_sync
 from ...telegram_client import PTBTelegramClient
 from ...thread_router import thread_router
+from ...topic_titles import remember_title
 from ...multiplexer import multiplexer as tmux_manager
 from ...window_state_store import CCGRAM_CREATED_WINDOW_ORIGIN
 from ..callback_data import CB_RESUME_CANCEL, CB_RESUME_PAGE, CB_RESUME_PICK
@@ -473,14 +474,17 @@ async def _handle_pick(
 
     # Rename topic to match the window
     client = PTBTelegramClient(context.bot)
+    chat_id = thread_router.resolve_chat_id(user_id, thread_id)
+    topic_name = format_topic_name_for_mode(
+        created_wname, window_query.get_approval_mode(created_wid)
+    )
     try:
         await client.edit_forum_topic(
-            chat_id=thread_router.resolve_chat_id(user_id, thread_id),
+            chat_id=chat_id,
             message_thread_id=thread_id,
-            name=format_topic_name_for_mode(
-                created_wname, window_query.get_approval_mode(created_wid)
-            ),
+            name=topic_name,
         )
+        remember_title(chat_id, thread_id, topic_name)
     except TelegramError as e:
         logger.debug("Failed to rename topic: %s", e)
 

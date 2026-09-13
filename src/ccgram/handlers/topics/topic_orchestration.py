@@ -33,6 +33,7 @@ from ...session import session_manager
 from ...session_monitor import NewWindowEvent
 from ...telegram_client import TelegramClient
 from ...thread_router import thread_router
+from ...topic_titles import remember_title
 from ...multiplexer import multiplexer as tmux_manager
 from ...multiplexer.base import canonical_window_id
 from ...window_state_ports import identity_state
@@ -447,6 +448,9 @@ async def create_topic_in_chat(
             chat_id,
             window_id,
         )
+        # Record the title now, so the first status update after the next
+        # restart can tell "unchanged" from "unknown" and skip the rename.
+        remember_title(chat_id, topic.message_thread_id, topic_name)
         _bind_topic_to_user(
             owner_id, topic.message_thread_id, window_id, chat_id, topic_name
         )

@@ -20,6 +20,7 @@ from ...session import session_manager
 from ...session_map import session_map_prefix
 from ...telegram_client import PTBTelegramClient, TelegramClient
 from ...thread_router import thread_router
+from ...topic_titles import remember_title
 from ...multiplexer import multiplexer as tmux_manager
 from ...multiplexer.base import canonical_window_id
 from ...utils import log_throttled
@@ -630,6 +631,11 @@ async def topic_edited_handler(
     if not window_id:
         logger.debug("Topic edited: no binding (thread=%d)", thread_id)
         return
+
+    # Whoever typed it, this is the title the topic now carries. Recording it
+    # keeps the "already carries this title" check honest: a later multiplexer
+    # rename back to the previous name is still a real change and is sent.
+    remember_title(chat_id, thread_id, new_name)
 
     clean_name = strip_emoji_prefix(new_name)
 

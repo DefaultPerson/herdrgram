@@ -54,6 +54,21 @@ def _clear_window_store():
 
 
 @pytest.fixture(autouse=True)
+def _clear_topic_titles():
+    """Keep one test's persisted topic titles out of the next one.
+
+    The record lives under the shared temp ``CCGRAM_DIR``, and a title left
+    behind would make the next test's rename look like the no-op rename the
+    record exists to suppress.
+    """
+    from ccgram import topic_titles
+
+    topic_titles.reset_for_testing()
+    yield
+    topic_titles.reset_for_testing()
+
+
+@pytest.fixture(autouse=True)
 def _wire_multiplexer():
     """Wire the multiplexer proxy to the tmux backend for the duration of a test.
 

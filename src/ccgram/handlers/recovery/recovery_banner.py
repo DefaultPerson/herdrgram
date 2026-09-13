@@ -36,6 +36,7 @@ from ...session import session_manager
 from ...session_map import session_map_sync
 from ...telegram_client import PTBTelegramClient
 from ...thread_router import thread_router
+from ...topic_titles import remember_title
 from ...multiplexer import multiplexer as tmux_manager
 from ..telegram_origin import send_telegram_to_window
 from ...window_state_store import CCGRAM_CREATED_WINDOW_ORIGIN
@@ -363,12 +364,15 @@ async def _create_and_bind_window(
         thread_router.set_group_chat_id(user_id, thread_id, chat.id)
 
     client = PTBTelegramClient(context.bot)
+    topic_chat_id = thread_router.resolve_chat_id(user_id, thread_id)
+    topic_name = format_topic_name_for_mode(created_wname, approval_mode)
     try:
         await client.edit_forum_topic(
-            chat_id=thread_router.resolve_chat_id(user_id, thread_id),
+            chat_id=topic_chat_id,
             message_thread_id=thread_id,
-            name=format_topic_name_for_mode(created_wname, approval_mode),
+            name=topic_name,
         )
+        remember_title(topic_chat_id, thread_id, topic_name)
     except TelegramError as e:
         logger.debug("Failed to rename topic: %s", e)
 
