@@ -32,6 +32,8 @@ Done when: неделя без возврата к ccbot; список гэпо�
 Done when: `ccgram --version` показывает версию из форка; `make check` зелёный.
 
 ## M3. Патч 1 — kill-on-topic-close (must-have, ~40-70 строк + тесты)
+Статус: **done** — `5badfa3` (патч A): `CCGRAM_KILL_ON_TOPIC_CLOSE` + `CCGRAM_DELETE_TOPIC_ON_AUTOCLOSE`, оба default false. TTL-свип несвязанных окон намеренно оставлен на origin-гейте.
+
 Задачи:
 - `config.py`: флаг `CCGRAM_KILL_ON_TOPIC_CLOSE` (default false, чтобы апстрим принял).
 - `handlers/topics/topic_lifecycle.py`: в `topic_closed_handler` (~:426) при флаге вызывать `multiplexer.kill_window(window_id)` после tri-state проверки присутствия (`reconciliation.window_presence`); снять гейт `view.origin == CCGRAM_CREATED_WINDOW_ORIGIN` в `_unbind_deleted_topic` (~:340) и `check_unbound_window_ttl` (~:185) под тем же флагом.
@@ -40,6 +42,8 @@ Done when: `ccgram --version` показывает версию из форка;
 Done when: `uv run pytest tests/ccgram -q -k "topic_lifecycle or topic_closed"` зелёный; вручную: закрыл тестовый топик → панель в herdr исчезла (проверять на scratch-табе с `sleep`, не на живых сессиях).
 
 ## M4. Патч 2 — `/show` (must-have, ~60-90 строк)
+Статус: **done** — `24e5d29` (патч B): `focus_window` + capability `supports_focus` в контракте, herdr `agent focus` с фолбэком на `tab focus`, команда `/show` и опциональная кнопка тулбара. Опциональный `notification.show` при доставке из Telegram выехал в патче C (`28fab55`); `pane report-metadata --title` не делался.
+
 Задачи:
 - `multiplexer/base.py`: метод контракта `focus_window(window_id) -> bool` + capability `supports_focus`.
 - `multiplexer/herdr.py`: `guard_session_target` → `_call_ok(["agent", "focus", record.terminal_id])` (0.7.1 ✓); tmux-бэкенд — `select-window` или `NotSupported`.
@@ -48,6 +52,8 @@ Done when: `uv run pytest tests/ccgram -q -k "topic_lifecycle or topic_closed"` 
 Done when: `/show` в топике переключает фокус herdr на нужную панель (`herdr pane list` → `focused: true`); тесты на guard + вызов.
 
 ## M5. Nice-to-have (по желанию, отдельными PR)
+Статус: **done** для первого пункта — `28fab55` (патч C): `CCGRAM_ECHO_USER_MESSAGES` (default true) и `CCGRAM_HERDR_NOTIFY_ON_INJECT` (default false, через новый `Multiplexer.notify` + capability `supports_notifications`). Остальные пункты списка не делались.
+
 - `CCGRAM_ECHO_USER_MESSAGES=false` (~10 строк, `response_builder.py:35`).
 - `delete_forum_topic` вместо `close_forum_topic` под флагом (`topic_lifecycle.py:134`).
 - Persistent blacklist для `/unbind` (проверка в `session_monitor._emit_unbound_window_events`, ~50-70 строк).
