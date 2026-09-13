@@ -60,6 +60,7 @@ def _make_callback_query(data: str, message_id: int = _THREAD_ID) -> MagicMock:
     query.message.delete = AsyncMock()
     bot = MagicMock()
     bot.set_message_reaction = AsyncMock()
+    bot.delete_message = AsyncMock()
     query.message.get_bot = MagicMock(return_value=bot)
     query.answer = AsyncMock()
     return query
@@ -95,6 +96,7 @@ class TestHandleVoiceMessage:
                 f"{_VH}.get_transcriber", return_value=transcriber
             ) as get_transcriber,
             patch(f"{_VH}.safe_reply", new_callable=AsyncMock) as reply,
+            patch(f"{_VH}.safe_edit", new_callable=AsyncMock) as edit,
             patch(
                 f"{_VH}._download_voice",
                 new_callable=AsyncMock,
@@ -111,6 +113,7 @@ class TestHandleVoiceMessage:
                 get_transcriber=get_transcriber,
                 transcriber=transcriber,
                 reply=reply,
+                edit=edit,
                 download=download,
             )
 
@@ -130,6 +133,46 @@ class TestHandleVoiceMessage:
             chat_id=_CHAT_ID, message_thread_id=_THREAD_ID, action=ChatAction.TYPING
         )
 
+    async def test_placeholder_is_posted_then_edited_into_the_result(
+        self, voice_env: SimpleNamespace
+    ) -> None:
+        """One message per voice note: the wait and the result share it."""
+        await voice_handler.handle_voice_message(
+            _make_update(), MagicMock(user_data={})
+        )
+
+        voice_env.reply.assert_awaited_once()
+        assert voice_env.reply.await_args.args[1] == voice_handler.TRANSCRIBING
+        voice_env.edit.assert_awaited_once()
+        assert _TRANSCRIPT in voice_env.edit.await_args.args[1]
+
+    async def test_review_keyboard_offers_send_rerecord_and_close(
+        self, voice_env: SimpleNamespace
+    ) -> None:
+        await voice_handler.handle_voice_message(
+            _make_update(), MagicMock(user_data={})
+        )
+
+        keyboard = voice_env.edit.await_args.kwargs["reply_markup"]
+        rows = [
+            [button.callback_data for button in row] for row in keyboard.inline_keyboard
+        ]
+        assert rows == [["vc:send:1"], ["vc:again:1", "vc:drop:1"]]
+
+    async def test_placeholder_failure_falls_back_to_a_fresh_reply(
+        self, voice_env: SimpleNamespace
+    ) -> None:
+        """A topic that refused the placeholder still gets the transcription."""
+        # First call is the placeholder and fails; the fallback reply succeeds.
+        voice_env.reply.side_effect = [None, MagicMock(chat=MagicMock(id=_CHAT_ID))]
+        context = MagicMock(user_data={})
+
+        await voice_handler.handle_voice_message(_make_update(), context)
+
+        voice_env.edit.assert_not_awaited()
+        assert _TRANSCRIPT in voice_env.reply.await_args_list[-1].args[1]
+        assert context.user_data[VOICE_PENDING][(_CHAT_ID, 1)] == _TRANSCRIPT
+
     async def test_autosend_posts_transcription_without_keyboard(
         self, voice_env: SimpleNamespace
     ) -> None:
@@ -144,9 +187,9 @@ class TestHandleVoiceMessage:
         ) as mock_send:
             await voice_handler.handle_voice_message(update, context)
 
-        voice_env.reply.assert_awaited_once_with(
-            update.message, f"🎤 Transcribed:\n\n{_TRANSCRIPT}"
-        )
+        voice_env.edit.assert_awaited_once()
+        assert voice_env.edit.await_args.args[1] == f"🎤 Transcribed:\n\n{_TRANSCRIPT}"
+        assert "reply_markup" not in voice_env.edit.await_args.kwargs
         mock_send.assert_awaited_once_with(
             _USER_ID, _THREAD_ID, "@0", _TRANSCRIPT, update.message
         )
@@ -237,7 +280,7 @@ class TestHandleVoiceMessage:
 
         await voice_handler.handle_voice_message(_make_update(), context)
 
-        assert "empty result" in voice_env.reply.call_args.args[1].lower()
+        assert "empty result" in voice_env.edit.await_args.args[1].lower()
         assert context.user_data == {}
 
     async def test_transcription_runtime_error(
@@ -251,7 +294,7 @@ class TestHandleVoiceMessage:
             _make_update(), MagicMock(user_data={})
         )
 
-        assert "❌" in voice_env.reply.call_args.args[1]
+        assert "❌" in voice_env.edit.await_args.args[1]
 
     async def test_failed_download_stops_processing(
         self, voice_env: SimpleNamespace
@@ -377,6 +420,46 @@ class TestHandleVoiceCallback:
         update.callback_query.message.delete.assert_called_once()
         update.callback_query.answer.assert_called_once_with("Discarded")
         assert (_CHAT_ID, _THREAD_ID) not in context.user_data.get(VOICE_PENDING, {})
+
+    async def test_re_record_clears_both_the_card_and_the_voice_note(
+        self, callback_env: SimpleNamespace
+    ) -> None:
+        """Re-recording means this take was wrong: no trace of it stays behind."""
+        update = _callback_update("vc:again:42")
+        context = _callback_context({(_CHAT_ID, _THREAD_ID): "wrong words"})
+        bot = update.callback_query.message.get_bot.return_value
+
+        await voice_callbacks.handle_voice_callback(update, context)
+
+        update.callback_query.message.delete.assert_called_once()
+        bot.delete_message.assert_awaited_once_with(chat_id=_CHAT_ID, message_id=42)
+        assert (_CHAT_ID, 42) not in context.user_data.get(VOICE_PENDING, {})
+        assert "again" in update.callback_query.answer.call_args.args[0].lower()
+
+    async def test_re_record_survives_an_undeletable_voice_note(
+        self, callback_env: SimpleNamespace
+    ) -> None:
+        """Telegram refuses to delete messages older than 48h; the card still goes."""
+        update = _callback_update("vc:again:42")
+        bot = update.callback_query.message.get_bot.return_value
+        bot.delete_message = AsyncMock(side_effect=TelegramError("too old"))
+
+        await voice_callbacks.handle_voice_callback(update, _callback_context({}))
+
+        update.callback_query.message.delete.assert_called_once()
+        update.callback_query.answer.assert_called_once()
+
+    async def test_close_keeps_the_voice_note(
+        self, callback_env: SimpleNamespace
+    ) -> None:
+        """Close is the quiet one: only the transcription card disappears."""
+        update = _callback_update("vc:drop:42")
+        bot = update.callback_query.message.get_bot.return_value
+
+        await voice_callbacks.handle_voice_callback(update, _callback_context({}))
+
+        update.callback_query.message.delete.assert_called_once()
+        bot.delete_message.assert_not_awaited()
 
     async def test_expired_entry(self, callback_env: SimpleNamespace) -> None:
         update = _callback_update("vc:send:99", message_id=99)

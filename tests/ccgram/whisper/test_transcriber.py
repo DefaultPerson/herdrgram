@@ -5,8 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from ccgram.whisper import get_transcriber
+from ccgram.whisper import (
+    DEFAULT_LOCAL_MODEL,
+    SUPPORTED_PROVIDERS,
+    get_transcriber,
+    reset_local_transcriber,
+)
 from ccgram.whisper.httpx_transcriber import OpenAICompatTranscriber
+from ccgram.whisper.local_transcriber import LocalWhisperTranscriber
 
 
 @pytest.fixture
@@ -153,3 +159,84 @@ class TestGetTranscriber:
 
         with pytest.raises(ValueError, match="set GROQ_API_KEY"):
             get_transcriber()
+
+
+class TestLocalProvider:
+    """`local` is the one provider that needs no key and no network."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_cache(self):
+        reset_local_transcriber()
+        yield
+        reset_local_transcriber()
+
+    @staticmethod
+    def _config(**overrides) -> MagicMock:
+        base = {
+            "whisper_provider": "local",
+            "whisper_api_key": "",
+            "whisper_base_url": "",
+            "whisper_model": "",
+            "whisper_language": "",
+            "whisper_device": "",
+            "whisper_compute_type": "",
+            "whisper_threads": 0,
+            "whisper_beam_size": 5,
+        }
+        base.update(overrides)
+        return MagicMock(**base)
+
+    def test_built_without_any_api_key(self, monkeypatch) -> None:
+        monkeypatch.setattr("ccgram.config.config", self._config())
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+        transcriber = get_transcriber()
+
+        assert isinstance(transcriber, LocalWhisperTranscriber)
+        assert transcriber.model == DEFAULT_LOCAL_MODEL
+        assert transcriber.device == "cpu"
+        assert transcriber.compute_type == "int8"
+
+    def test_config_overrides_are_applied(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "ccgram.config.config",
+            self._config(
+                whisper_model="Systran/faster-whisper-small",
+                whisper_language="ru",
+                whisper_device="cuda",
+                whisper_compute_type="float16",
+                whisper_threads=2,
+                whisper_beam_size=1,
+            ),
+        )
+
+        transcriber = get_transcriber()
+
+        assert transcriber.model == "Systran/faster-whisper-small"
+        assert transcriber.language == "ru"
+        assert transcriber.device == "cuda"
+        assert transcriber.compute_type == "float16"
+        assert transcriber.cpu_threads == 2
+        assert transcriber.beam_size == 1
+
+    def test_local_is_listed_as_supported(self) -> None:
+        assert "local" in SUPPORTED_PROVIDERS
+
+    def test_same_config_returns_the_same_loaded_instance(self, monkeypatch) -> None:
+        """One voice message per call: rebuilding would reload the weights."""
+        monkeypatch.setattr("ccgram.config.config", self._config())
+
+        assert get_transcriber() is get_transcriber()
+
+    def test_changed_config_rebuilds(self, monkeypatch) -> None:
+        monkeypatch.setattr("ccgram.config.config", self._config())
+        first = get_transcriber()
+
+        monkeypatch.setattr(
+            "ccgram.config.config",
+            self._config(whisper_model="Systran/faster-whisper-small"),
+        )
+        second = get_transcriber()
+
+        assert first is not second
+        assert second.model == "Systran/faster-whisper-small"

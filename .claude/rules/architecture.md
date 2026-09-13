@@ -56,7 +56,8 @@ Backend-neutral terminal-multiplexer seam (mirrors the `providers/` seam). Calle
 
 - `base.py` — `WhisperTranscriber` Protocol + `TranscriptionResult`.
 - `httpx_transcriber.py` — OpenAI-compatible transcription (OpenAI, Groq, …).
-- `__init__.py` — `get_transcriber()`.
+- `local_transcriber.py` — `LocalWhisperTranscriber`, in-process faster-whisper (`CCGRAM_WHISPER_PROVIDER=local`). `faster_whisper` is an optional dependency imported at first use, so an install without it fails with the install command rather than at import. The weights load once per process, lazily, in a worker thread behind `_load_lock`; decodes run in a worker thread behind `_decode_lock`, so the poll loop keeps answering and two voice notes cannot claim every core at once. Audio goes in as `io.BytesIO` — PyAV decodes Telegram's OGG/Opus with no ffmpeg subprocess and no temp file. `vad_filter=True` and `condition_on_previous_text=False` are fixed: the first drops the silence Whisper hallucinates into, the second stops a short clip looping a phrase. The model is injectable (`model_loader`) so tests never touch weights.
+- `__init__.py` — `get_transcriber()`, `SUPPORTED_PROVIDERS`, `reset_local_transcriber()`. The local branch is memoized in `_local_cache`, keyed by the six settings that shape the model: `get_transcriber()` runs once per voice message and an uncached factory would reload ~1.5 GB every time.
 
 ### `src/ccgram/` (core)
 
@@ -228,8 +229,8 @@ Top-level (constants, leaves, top-level commands):
 
 `handlers/voice/` — voice transcription:
 
-- `voice_handler.py` — download, transcription, confirm keyboard.
-- `voice_callbacks.py` — `vc:send`/`vc:drop` routing; shell-provider transcriptions route through LLM.
+- `voice_handler.py` — download, transcription, review keyboard. A `🎤 Transcribing…` placeholder is posted before the model runs and edited into the result, keyboard and all: a local CPU decode takes about as long as the recording and outlives Telegram's five-second typing indicator, so without it the topic is silent for the whole wait. The keyboard is `[✅ Send to agent]` on its own row over `[🔁 Re-record] [✖️ Close]` — Send is the only action that reaches the agent. If the placeholder cannot be sent the result falls back to a fresh reply.
+- `voice_callbacks.py` — `vc:send`/`vc:again`/`vc:drop` routing; shell-provider transcriptions route through LLM. All three carry the *voice* message id, which is what lets Send react to it and Re-record delete it. `vc:again` deletes the card and the voice note (a wrong take left in place would leave two versions of one instruction in the topic); `vc:drop` deletes only the card.
 
 ## Key Design Decisions
 

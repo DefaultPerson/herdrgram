@@ -1,8 +1,13 @@
-"""Voice transcription callbacks — handle confirm (send to agent) and discard actions.
+"""Voice transcription callbacks — send, re-record or close a transcription.
 
 Handles the inline keyboard callbacks triggered after voice message transcription:
   - vc:send:<msg_id>: Send transcribed text to the bound agent window
-  - vc:drop:<msg_id>: Discard the transcription and delete the confirmation message
+  - vc:again:<msg_id>: Drop the transcription *and* the voice note it came from,
+    so the next recording is the only one in the topic
+  - vc:drop:<msg_id>: Discard the transcription, keep the voice note
+
+``<msg_id>`` is the original voice message throughout, which is what makes
+re-recording able to delete it and Send able to react to it.
 
 Key function: handle_voice_callback
 """
@@ -53,7 +58,7 @@ async def handle_voice_callback(
         return
 
     try:
-        parts = query.data.split(":", 2)  # ["vc", "send"/"drop", "<msg_id>"]
+        parts = query.data.split(":", 2)  # ["vc", "send"/"again"/"drop", "<msg_id>"]
         action = parts[1]
         message_id = int(parts[2])
     except IndexError, ValueError:
@@ -62,6 +67,8 @@ async def handle_voice_callback(
 
     if action == "send":
         await _handle_send(query.message, query, user.id, message_id, update, context)
+    elif action == "again":
+        await _handle_again(query.message, query, message_id, context)
     elif action == "drop":
         await _handle_drop(query.message, query, message_id, context)
     else:
@@ -151,21 +158,57 @@ async def _ack_delivered(
     await query.answer()
 
 
+def _forget_pending(
+    msg: Message, message_id: int, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Drop the stored transcription for this voice message, if any."""
+    if context.user_data is not None:
+        context.user_data.get(VOICE_PENDING, {}).pop((msg.chat.id, message_id), None)
+
+
+async def _delete_quietly(msg: Message, what: str) -> None:
+    """Delete a message, logging rather than raising when Telegram refuses.
+
+    Telegram will not let a bot delete a message older than 48 hours, and the
+    user may have deleted it already; neither is worth an error in the chat.
+    """
+    try:
+        await msg.delete()
+    except TelegramError as e:
+        logger.warning("Failed to delete %s: %s", what, e)
+
+
+async def _handle_again(
+    msg: Message,
+    query: CallbackQuery,
+    message_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle vc:again — clear this attempt entirely so the user can record anew.
+
+    Both the transcription card and the voice note go, because the point of
+    re-recording is that this take was wrong: leaving it would put two takes of
+    the same instruction in the topic, and the agent's operator would have to
+    work out which one was sent.
+    """
+    _forget_pending(msg, message_id, context)
+    await _delete_quietly(msg, "voice confirm message on re-record")
+    try:
+        await msg.get_bot().delete_message(chat_id=msg.chat.id, message_id=message_id)
+    except TelegramError as e:
+        logger.warning("Failed to delete the voice note on re-record: %s", e)
+    await query.answer("🎤 Record again")
+
+
 async def _handle_drop(
     msg: Message,
     query: CallbackQuery,
     message_id: int,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle vc:drop — discard the transcription and delete the confirm message."""
-    if context.user_data is not None:
-        context.user_data.get(VOICE_PENDING, {}).pop((msg.chat.id, message_id), None)
-
-    try:
-        await msg.delete()
-    except TelegramError as e:
-        logger.warning("Failed to delete voice confirm message on discard: %s", e)
-
+    """Handle vc:drop — discard the transcription, leaving the voice note alone."""
+    _forget_pending(msg, message_id, context)
+    await _delete_quietly(msg, "voice confirm message on discard")
     await query.answer("Discarded")
 
 

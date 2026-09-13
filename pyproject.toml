@@ -46,6 +46,11 @@ ccgram = "ccgram.main:main"
 tts = [
     "edge-tts>=7.2.8",
 ]
+# Local speech-to-text (CCGRAM_WHISPER_PROVIDER=local). Pulls CTranslate2 and
+# PyAV; the model weights download on first use and are cached by huggingface.
+whisper-local = [
+    "faster-whisper>=1.2.1",
+]
 dev = [
     "deptry>=0.23.0",
     "pyright>=1.1.0",

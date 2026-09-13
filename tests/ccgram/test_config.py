@@ -484,3 +484,49 @@ class TestIgnoredThreadIds:
         monkeypatch.setenv("CCGRAM_IGNORED_THREAD_IDS", "636135,github")
         with pytest.raises(ValueError, match="CCGRAM_IGNORED_THREAD_IDS"):
             Config()
+
+
+@pytest.mark.usefixtures("_base_env")
+class TestLocalWhisperSettings:
+    """The knobs only the in-process transcriber reads."""
+
+    def test_defaults_are_empty_so_the_backend_decides(self, monkeypatch):
+        for name in (
+            "CCGRAM_WHISPER_DEVICE",
+            "CCGRAM_WHISPER_COMPUTE_TYPE",
+            "CCGRAM_WHISPER_THREADS",
+            "CCGRAM_WHISPER_BEAM_SIZE",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        config = Config()
+
+        assert config.whisper_device == ""
+        assert config.whisper_compute_type == ""
+        assert config.whisper_threads == 0  # 0 = one fewer thread than cores
+        assert config.whisper_beam_size == 5
+
+    def test_values_are_read(self, monkeypatch):
+        monkeypatch.setenv("CCGRAM_WHISPER_DEVICE", "cuda")
+        monkeypatch.setenv("CCGRAM_WHISPER_COMPUTE_TYPE", "float16")
+        monkeypatch.setenv("CCGRAM_WHISPER_THREADS", "2")
+        monkeypatch.setenv("CCGRAM_WHISPER_BEAM_SIZE", "1")
+        config = Config()
+
+        assert config.whisper_device == "cuda"
+        assert config.whisper_compute_type == "float16"
+        assert config.whisper_threads == 2
+        assert config.whisper_beam_size == 1
+
+    @pytest.mark.parametrize(
+        ("threads", "beam", "expected_threads", "expected_beam"),
+        [("-4", "0", 0, 1), ("0", "-1", 0, 1)],
+    )
+    def test_nonsense_values_are_clamped(
+        self, monkeypatch, threads, beam, expected_threads, expected_beam
+    ):
+        monkeypatch.setenv("CCGRAM_WHISPER_THREADS", threads)
+        monkeypatch.setenv("CCGRAM_WHISPER_BEAM_SIZE", beam)
+        config = Config()
+
+        assert config.whisper_threads == expected_threads
+        assert config.whisper_beam_size == expected_beam

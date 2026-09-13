@@ -122,7 +122,7 @@ CB_SYNC_FIX = "sync:fix"
 CB_SYNC_DISMISS = "sync:x"
 
 # Voice transcription confirm/discard
-CB_VOICE = "vc:"  # vc:send:<msg_id> / vc:drop:<msg_id>
+CB_VOICE = "vc:"  # vc:send:<msg_id> / vc:again:<msg_id> / vc:drop:<msg_id>
 
 # Shell command approval
 CB_SHELL_RUN = "sh:run:"  # sh:run:<window_id>

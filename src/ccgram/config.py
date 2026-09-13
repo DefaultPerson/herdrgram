@@ -144,21 +144,7 @@ class Config:
         # Ack reaction: react to forwarded messages with an emoji (empty = disabled)
         self.ack_reaction: str = os.getenv("CCGRAM_ACK_REACTION", "")
 
-        # Whisper transcription
-        self.whisper_provider: str = os.getenv("CCGRAM_WHISPER_PROVIDER", "")
-        self.whisper_api_key: str = os.getenv("CCGRAM_WHISPER_API_KEY", "")
-        self.whisper_base_url: str = os.getenv("CCGRAM_WHISPER_BASE_URL", "")
-        self.whisper_model: str = os.getenv("CCGRAM_WHISPER_MODEL", "")
-        self.whisper_language: str = os.getenv("CCGRAM_WHISPER_LANGUAGE", "")
-
-        # Voice replies (text-to-speech)
-        # CCGRAM_TTS_PROVIDER: empty = disabled; "edge" = edge-tts; "openai" = OpenAI TTS
-        self.tts_provider: str = os.getenv("CCGRAM_TTS_PROVIDER", "")
-        self.tts_voice: str = os.getenv(
-            "CCGRAM_TTS_VOICE", "en-US-EmmaMultilingualNeural"
-        )
-        self.tts_model: str = os.getenv("CCGRAM_TTS_MODEL", "gpt-4o-mini-tts")
-        self.tts_api_key: str = os.getenv("CCGRAM_TTS_API_KEY", "")
+        self._init_voice()
 
         # LLM command generation (shell provider) and toolbar config path.
         # toolbar_config_path resolution: env var → ~/.ccgram/toolbar.toml → "".
@@ -230,6 +216,34 @@ class Config:
         self.live_view_timeout: int = max(
             1, _parse_int_env("CCGRAM_LIVE_VIEW_TIMEOUT", 300)
         )
+
+    def _init_voice(self) -> None:
+        """Speech-to-text (Whisper) and text-to-speech settings."""
+        # Whisper transcription. Provider "" disables voice input entirely;
+        # "openai"/"groq" call an HTTP API; "local" runs faster-whisper here.
+        self.whisper_provider: str = os.getenv("CCGRAM_WHISPER_PROVIDER", "")
+        self.whisper_api_key: str = os.getenv("CCGRAM_WHISPER_API_KEY", "")
+        self.whisper_base_url: str = os.getenv("CCGRAM_WHISPER_BASE_URL", "")
+        self.whisper_model: str = os.getenv("CCGRAM_WHISPER_MODEL", "")
+        self.whisper_language: str = os.getenv("CCGRAM_WHISPER_LANGUAGE", "")
+        # Local-only knobs. The HTTP providers run the model on somebody else's
+        # machine and expose none of this, so they ignore all four. Threads 0
+        # means "one fewer than this machine has"; beam 1 is greedy decoding.
+        self.whisper_device: str = os.getenv("CCGRAM_WHISPER_DEVICE", "")
+        self.whisper_compute_type: str = os.getenv("CCGRAM_WHISPER_COMPUTE_TYPE", "")
+        self.whisper_threads: int = max(0, _parse_int_env("CCGRAM_WHISPER_THREADS", 0))
+        self.whisper_beam_size: int = max(
+            1, _parse_int_env("CCGRAM_WHISPER_BEAM_SIZE", 5)
+        )
+
+        # Voice replies (text-to-speech)
+        # CCGRAM_TTS_PROVIDER: empty = disabled; "edge" = edge-tts; "openai" = OpenAI TTS
+        self.tts_provider: str = os.getenv("CCGRAM_TTS_PROVIDER", "")
+        self.tts_voice: str = os.getenv(
+            "CCGRAM_TTS_VOICE", "en-US-EmmaMultilingualNeural"
+        )
+        self.tts_model: str = os.getenv("CCGRAM_TTS_MODEL", "gpt-4o-mini-tts")
+        self.tts_api_key: str = os.getenv("CCGRAM_TTS_API_KEY", "")
 
     def _init_shell_and_llm(self) -> None:
         self.prompt_mode = os.getenv("CCGRAM_PROMPT_MODE", "wrap")
