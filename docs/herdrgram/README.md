@@ -14,8 +14,7 @@ Telegram ⇄ Claude Code через **herdr** (без tmux): ушёл от ко�
 - Форк: этот репо = `alexei-led/ccgram` v4.10.3 + патчи herdrgram (`git log upstream/main..main`). Remote `upstream` указывает на ccgram.
 - Конфиг: `~/.ccgram/.env` (токен тестового бота `@your_bot`, `CCGRAM_MULTIPLEXER=herdr`, флаги патчей включены, `AUTOCLOSE_DONE_MINUTES=0`, `AUTOCLOSE_DEAD_MINUTES=2`).
 - Хуки Claude Code: `uv run ccgram hook --install` уже выполнен (9 событий рядом с herdr-хуком; проверка `uv run ccgram doctor`; откат `uv run ccgram hook --uninstall`).
-- Процесс: вкладка herdr `__ccgram__` (label вида `__*__` невидим для адопции), команда `cd ~/projects/misc/herdrgram && uv run ccgram 2>&1 | tee -a /tmp/herdrgram-bot.log`.
-- Перезапуск после правок: Ctrl-C в той вкладке и та же команда (или `herdr pane run <pane_id> "..."`).
+- Процесс: systemd user unit `~/.config/systemd/user/ccgram.service` (`ExecStart=.venv/bin/ccgram`, `WorkingDirectory=` этот репо, `Restart=on-failure`). Команды: `systemctl --user status|restart|stop ccgram`, логи `journalctl --user -u ccgram -f -o cat`. После правок кода: `systemctl --user restart ccgram`.
 - Скрыть сессию от бота: `herdr tab rename <tab_id> __имя__`. Вернуть: `herdr tab rename <tab_id> имя`.
 
 ### Патчи поверх апстрима
