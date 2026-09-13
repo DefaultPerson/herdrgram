@@ -34,6 +34,8 @@ from ...telegram_client import TelegramClient
 from ...thread_router import thread_router
 from ...multiplexer import multiplexer as tmux_manager
 from ...multiplexer.base import canonical_window_id
+from ...window_state_ports import identity_state
+from ..recovery.transcript_discovery import seed_session_from_native_id
 from ..status.topic_emoji import strip_emoji_prefix
 from .topic_probe import probe_topic_exists
 
@@ -247,6 +249,25 @@ async def _auto_detect_provider(window_id: str) -> None:
             window_id,
             w.pane_current_command,
         )
+
+
+async def _seed_native_session(window_id: str) -> None:
+    """Register the backend's own session id before the first poll tick.
+
+    Adoption takes over a window that may have been running long before ccgram
+    saw it, so leaving this to the tick would drop whatever the agent said in
+    between. Skipped outright once the window already tracks a session, which
+    keeps the extra backend lookup to windows that would otherwise go
+    unmonitored — and to nothing at all on a backend that publishes no native
+    session id, where the seed declines immediately.
+    """
+    identity = identity_state.get_identity(window_id)
+    if identity is not None and identity.session_id and identity.transcript_path:
+        return
+    w = await tmux_manager.find_window_by_id(window_id)
+    if w is None or not w.native_session_id:
+        return
+    await seed_session_from_native_id(window_id, w, identity)
 
 
 def collect_target_chats(window_id: str) -> set[int]:
@@ -573,6 +594,7 @@ async def _handle_new_window_locked(
         return False
 
     await _auto_detect_provider(event.window_id)
+    await _seed_native_session(event.window_id)
 
     topic_name = event.window_name or Path(event.cwd).name or event.window_id
     if (

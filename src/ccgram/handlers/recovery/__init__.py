@@ -7,7 +7,8 @@ validators), ``recovery_banner`` (dead-window banner UX flow),
 ``restore_command`` (/restore re-renders the banner on demand),
 ``resume_command`` (/resume scans past Claude sessions and resumes one),
 ``transcript_discovery`` (hookless transcript discovery for
-Codex/Gemini/Pi and provider auto-detection), ``history`` (paginated
+Codex/Gemini/Pi, native-session seeding, and provider
+auto-detection), ``history`` (paginated
 message history send/edit), and ``history_callbacks`` (page-navigation
 callback handler).
 
@@ -28,7 +29,10 @@ from .resume_command import (
     scan_all_sessions,
 )
 from .resume_picker import scan_sessions_for_cwd
-from .transcript_discovery import discover_and_register_transcript
+from .transcript_discovery import (
+    discover_and_register_transcript,
+    seed_session_from_native_id,
+)
 
 __all__ = [
     "RecoveryBanner",
@@ -44,5 +48,6 @@ __all__ = [
     "resume_command",
     "scan_all_sessions",
     "scan_sessions_for_cwd",
+    "seed_session_from_native_id",
     "send_history",
 ]

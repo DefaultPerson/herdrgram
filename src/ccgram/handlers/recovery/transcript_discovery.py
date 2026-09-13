@@ -6,15 +6,19 @@ and shell ↔ agent transitions.
 
 Key components:
   - discover_and_register_transcript: main discovery function called per topic
+  - seed_session_from_native_id: register the session a backend already names
   - _detect_and_apply_provider: provider auto-detection from running process
   - _find_and_register_transcript: transcript search for hookless providers
 """
 
 import asyncio
+from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
 
+from ... import session_query
 from ...providers import (
     detect_provider_from_pane,
     detect_provider_from_runtime,
@@ -52,6 +56,116 @@ def _session_id_already_bound(session_id: str, window_id: str) -> bool:
             continue
         if identity_state.get_session_id(bound_window_id) == session_id:
             return True
+    return False
+
+
+# Providers whose transcript file is fully determined by a session id and a
+# working directory. Claude names the file after the session id inside a
+# directory derived from the cwd, so a backend that publishes the session id
+# gives us everything needed to find it. Codex and Gemini name their files by
+# their own scheme and are already located by the hookless scan below, so they
+# are deliberately absent — an entry here is a claim that the pair is enough.
+_NATIVE_SEED_TRANSCRIPTS: dict[str, Callable[[str, str], Path | None]] = {
+    "claude": session_query.build_claude_transcript_path,
+}
+
+
+def _native_seed_cwds(
+    w: "TmuxWindow", identity: identity_state.IdentityProjection | None
+) -> list[str]:
+    """Directories to try when deriving the transcript, best candidate first.
+
+    The backend's own value leads: it reports the directory the agent runs in,
+    which is the one the provider encoded into the transcript's path. The
+    stored cwd follows as a fallback for a backend that reports none.
+    """
+    cwds: list[str] = []
+    for cwd in (w.cwd, identity.cwd if identity else ""):
+        if cwd and cwd not in cwds:
+            cwds.append(cwd)
+    return cwds
+
+
+async def seed_session_from_native_id(
+    window_id: str,
+    w: "TmuxWindow | None",
+    identity: identity_state.IdentityProjection | None,
+) -> bool:
+    """Register the session the multiplexer already names for this window.
+
+    Only a session with a ``session_map.json`` entry is monitored, and for a
+    hookful provider that entry is written by the agent's own SessionStart
+    hook. A session that was already running when the hook was installed, or
+    whose hook failed, therefore gets a Telegram topic that never receives a
+    line: no other path creates the entry, because Stop and Notification
+    events refuse to author one.
+
+    A backend that publishes the agent's native session id knows what that
+    hook would have written. Derive the transcript from the id and the working
+    directory and register it the way a hookless provider is registered, which
+    is the same pair of writes and the same guard against two topics claiming
+    one session.
+
+    Returns whether an entry was written. Nothing is replayed: the monitor
+    starts a session it has not tracked before at the current end of the file,
+    so seeding a multi-megabyte transcript delivers its next line, not its
+    history.
+    """
+    if w is None or not w.native_session_id or not w.native_agent:
+        return False
+    session_id = w.native_session_id
+
+    if (
+        identity is not None
+        and identity.session_id == session_id
+        and identity.transcript_path is not None
+    ):
+        # Already tracking exactly this session — the steady-state answer on
+        # every tick of every bound topic, so it must not touch the disk.
+        return False
+
+    derive = _NATIVE_SEED_TRANSCRIPTS.get(w.native_agent)
+    if derive is None:
+        return False
+
+    if _session_id_already_bound(session_id, window_id):
+        logger.debug(
+            "Skipping native session seed: session is bound to another window",
+            window_id=window_id,
+            session_id=session_id,
+        )
+        return False
+
+    for cwd in _native_seed_cwds(w, identity):
+        transcript_path = derive(session_id, cwd)
+        if transcript_path is None or not await asyncio.to_thread(
+            transcript_path.is_file
+        ):
+            continue
+        session_map_sync.register_hookless_session(
+            window_id=window_id,
+            session_id=session_id,
+            cwd=cwd,
+            transcript_path=str(transcript_path),
+            provider_name=w.native_agent,
+        )
+        await asyncio.to_thread(
+            session_map_sync.write_hookless_session_map,
+            window_id=window_id,
+            session_id=session_id,
+            cwd=cwd,
+            transcript_path=str(transcript_path),
+            provider_name=w.native_agent,
+        )
+        logger.info(
+            "Seeded session map from multiplexer native session id",
+            window_id=window_id,
+            session_id=session_id,
+            provider=w.native_agent,
+            cwd=cwd,
+            transcript_path=str(transcript_path),
+        )
+        return True
     return False
 
 
@@ -313,6 +427,24 @@ async def _complete_transcript_discovery(
     return False
 
 
+async def _seed_and_refresh_identity(
+    window_id: str,
+    w: "TmuxWindow | None",
+    identity: identity_state.IdentityProjection,
+) -> identity_state.IdentityProjection:
+    """Seed from the backend's native session id and re-read what it wrote.
+
+    A successful seed leaves the window holding the entry its hook would have
+    written, so the caller's hook-resolved check reads it as tracked and the
+    hookless scan is skipped — but only if it sees the state after the write,
+    not the projection taken before it.
+    """
+    if not await seed_session_from_native_id(window_id, w, identity):
+        return identity
+    refreshed = identity_state.get_identity(window_id)
+    return refreshed if refreshed is not None else identity
+
+
 async def _bootstrap_identity(
     window_id: str, w: "TmuxWindow | None"
 ) -> identity_state.IdentityProjection | None:
@@ -381,6 +513,10 @@ async def discover_and_register_transcript(
     Shell-origin windows may transition shell ↔ agent. Agent-origin windows
     retain their provider when the process returns to a shell so callers can
     route the topic into recovery instead of shell command handling.
+
+    A backend that publishes the agent's own session id gets that session
+    registered here first, which heals a hookful window whose hook never wrote
+    one — see ``seed_session_from_native_id``.
     """
     # Lazy: thread_router proxy resolved when transcript discovery is invoked
     from ...thread_router import thread_router
@@ -415,6 +551,8 @@ async def discover_and_register_transcript(
             old_identity=original_identity,
             new_identity=identity,
         )
+
+    identity = await _seed_and_refresh_identity(window_id, w, identity)
 
     if _hook_already_resolved(window_id, identity) and not process_restarted:
         return False

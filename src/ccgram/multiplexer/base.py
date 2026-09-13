@@ -73,6 +73,27 @@ class WindowRef:
     ambiguous and must not be migrated.
     """
 
+    native_session_id: str = ""
+    """The multiplexer-published native session id of the agent in this window.
+
+    Empty unless the backend itself knows which session the agent is running:
+    herdr publishes the running agent's own session id, while tmux and agterm
+    see a pane and nothing inside it.  It is the same value the agent's hook
+    would report, so a caller can find a session whose hook never fired without
+    asking the backend anything backend-shaped.
+
+    Never an identity: the window is still addressed by ``window_id``.  A
+    backend is free to re-key a window when this value changes.
+    """
+
+    native_agent: str = ""
+    """Which agent ``native_session_id`` belongs to (``claude``, ``codex``, …).
+
+    Empty whenever ``native_session_id`` is, and the agent's own name otherwise
+    — the same names the provider registry uses — so a caller can pick the
+    right transcript layout without a per-backend conditional.
+    """
+
     def matches(self, window_id: str) -> bool:
         """Whether *window_id* names this window, under any identity it has had.
 

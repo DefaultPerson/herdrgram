@@ -42,15 +42,31 @@ class ClaudeSession:
     file_path: str
 
 
+def build_claude_transcript_path(session_id: str, cwd: str) -> Path | None:
+    """The Claude transcript path implied by a session id and its directory.
+
+    Claude Code stores one JSONL per session, named after the session id,
+    inside a project directory whose name is the session's working directory
+    with every ``/`` replaced by ``-``. That makes the pair enough to name the
+    file without searching for it, which is what lets a caller holding a
+    session id from somewhere other than the hook find the transcript.
+
+    Returns None when either half is missing. The path is not checked for
+    existence: an id and a directory that never belonged together name a file
+    that is simply not there, and only the caller knows what to do about it.
+    """
+    if not session_id or not cwd:
+        return None
+    encoded_cwd = cwd.replace("/", "-")
+    return config.claude_projects_path / encoded_cwd / f"{session_id}.jsonl"
+
+
 class SessionResolver:
     """Resolves tmux windows to Claude session files and reads message history."""
 
     def _build_session_file_path(self, session_id: str, cwd: str) -> Path | None:
         """Build the direct file path for a session from session_id and cwd."""
-        if not session_id or not cwd:
-            return None
-        encoded_cwd = cwd.replace("/", "-")
-        return config.claude_projects_path / encoded_cwd / f"{session_id}.jsonl"
+        return build_claude_transcript_path(session_id, cwd)
 
     def _session_from_transcript_path(
         self,

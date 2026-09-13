@@ -45,6 +45,8 @@ In `session_map.json` (key format `"tmux_session:window_id"`):
 
 Written when Claude Code's `SessionStart` hook fires (always sets `provider_name: "claude"`; other providers have no hook). All hook events also append to `events.jsonl` for instant dispatch.
 
+No other hook event creates the entry, so a session that predates the hook install — or whose hook failed — has a topic and no monitoring. On a backend that publishes the agent's own session id (`WindowRef.native_session_id`, herdr), `transcript_discovery.seed_session_from_native_id` writes the entry the hook would have: it derives the Claude transcript from (session id, cwd), and registers it through the hookless pair. Hookless providers (Codex, Gemini, Pi) write their entries through the same pair after a transcript scan.
+
 One window maps to one session; session_id changes after `/clear`. SessionMonitor reads session_map for which sessions to watch, and `events.jsonl` for instant event notifications (interactive UI, done detection, subagent status).
 
 ## Message Flows

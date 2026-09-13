@@ -37,6 +37,17 @@ class TestValueTypeDefaults:
         assert window.pane_height == 0
         assert window.alias_window_ids == ()
 
+    def test_window_ref_publishes_no_native_session_by_default(self) -> None:
+        """A backend that cannot see inside the pane says nothing about it.
+
+        tmux and agterm know a pane, not the agent's session, so the seeding
+        path that consumes these fields has to read "unknown" from a plain
+        construction rather than a stale or guessed id.
+        """
+        window = WindowRef(window_id="@0", window_name="x", cwd="/")
+        assert window.native_session_id == ""
+        assert window.native_agent == ""
+
     def test_capture_result_is_untruncated_by_default(self) -> None:
         assert CaptureResult(text="hello").truncated is False
 

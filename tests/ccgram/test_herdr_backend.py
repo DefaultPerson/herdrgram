@@ -1942,6 +1942,34 @@ async def test_list_windows_cwd_empty_when_agent_record_has_no_cwd_key() -> None
     assert windows[0].cwd == ""
 
 
+async def test_live_records_publish_the_agents_native_session_id() -> None:
+    """The adapter hands the session id up so a hookless window can be healed.
+
+    ccgram only monitors a session it has a map entry for, and on Claude that
+    entry comes from the agent's own hook. Herdr already knows which session
+    each pane runs, so it publishes it and the seeding path needs no herdr
+    knowledge of its own.
+    """
+    windows = await _manager(_live_fake(_agent(value="sess-1"))).list_windows()
+    assert len(windows) == 1
+    assert windows[0].native_session_id == "sess-1"
+    assert windows[0].native_agent == "claude"
+
+
+async def test_terminal_fallback_publishes_no_native_session_id() -> None:
+    """A minted terminal identity is not a session the provider ever wrote.
+
+    The sessionless composite is this adapter's own stand-in for a session
+    Herdr could not name, so publishing its value would send a caller looking
+    for a transcript that does not exist under it.
+    """
+    windows = await _manager(_live_fake(_sessionless("term-z"))).list_windows()
+    assert len(windows) == 1
+    assert windows[0].window_id == _sessionless_target("term-z")
+    assert windows[0].native_session_id == ""
+    assert windows[0].native_agent == ""
+
+
 async def test_live_records_are_stamped_adoptable() -> None:
     """The herdr topic rules live here now, not in ``is_agent_topic_window``.
 

@@ -691,7 +691,16 @@ class HerdrManager:
         carrying a guarded target, and a bare shell pane never reaches it. The
         verdict travels on the window so discovery needs no herdr-shaped check
         of its own.
+
+        ``native_session_id`` carries the agent's own session id for the same
+        reason: only a ``kind == "id"`` composite holds one. The terminal
+        fallback composite is a stand-in identity this adapter minted for a
+        session Herdr could not name, so publishing its value would send a
+        caller looking for a transcript that was never written under it.
         """
+        native_session_id = (
+            record.composite.value if record.composite.kind == "id" else ""
+        )
         return WindowRef(
             window_id=record.target_id,
             window_name=label,
@@ -700,6 +709,8 @@ class HerdrManager:
             topic_eligible=adoptable
             and is_herdr_session_target(record.target_id)
             and bool(record.composite.agent.strip()),
+            native_session_id=native_session_id,
+            native_agent=record.composite.agent if native_session_id else "",
         )
 
     async def _reconciliation_labels(

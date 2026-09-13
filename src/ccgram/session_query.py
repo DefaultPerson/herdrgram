@@ -21,7 +21,21 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .session_resolver import ClaudeSession
+
+
+def build_claude_transcript_path(session_id: str, cwd: str) -> "Path | None":
+    """The Claude transcript path implied by a session id and its directory.
+
+    None when either half is missing. The file is not checked for existence —
+    see ``session_resolver.build_claude_transcript_path``.
+    """
+    # Lazy: session_resolver constructed per-call so tests can stub it
+    from .session_resolver import build_claude_transcript_path as _build
+
+    return _build(session_id, cwd)
 
 
 async def resolve_session_for_window(window_id: str) -> "ClaudeSession | None":
