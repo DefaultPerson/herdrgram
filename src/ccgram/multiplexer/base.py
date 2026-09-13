@@ -288,6 +288,14 @@ class MultiplexerCapabilities:
     no-op as success.
     """
 
+    supports_notifications: bool = False
+    """True when the backend can raise a desktop notification (herdr).
+
+    Gates ``notify``: tmux and agterm have no UI of their own to draw a toast
+    in, so they declare False and callers skip the call rather than pay for a
+    round trip that can only fail.
+    """
+
 
 # ── Protocol ───────────────────────────────────────────────────────────
 
@@ -522,6 +530,17 @@ class Multiplexer(Protocol):
         the backend has no UI to raise, when the window can no longer be
         resolved, or when the backend refuses the request — callers gate on
         the capability first and report the result, never assume success.
+        """
+        ...
+
+    async def notify(self, title: str, body: str) -> bool:
+        """Show a desktop notification in the backend's UI; True when shown.
+
+        Only meaningful on backends with ``capabilities.supports_notifications``
+        (herdr draws a toast in its own window). Returns False when the backend
+        has no UI to draw in or the request was refused. Purely informational:
+        the result never changes what the caller was doing, so callers gate on
+        the capability and ignore the answer beyond logging it.
         """
         ...
 

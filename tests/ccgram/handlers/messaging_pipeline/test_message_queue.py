@@ -1486,6 +1486,120 @@ class TestThinkingGate:
         mock_process.assert_awaited_once_with(bot, 1, ct)
 
 
+class TestUserEchoGate:
+    """CCGRAM_ECHO_USER_MESSAGES gates the \U0001f464 echo of terminal input."""
+
+    @staticmethod
+    def _user_task() -> ContentTask:
+        return ContentTask(
+            window_id="@0",
+            parts=("\U0001f464 typed at the keyboard",),
+            role="user",
+            thread_id=42,
+            chat_id=-1001,
+        )
+
+    @patch(
+        "ccgram.handlers.messaging_pipeline.message_queue._process_content_task",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "ccgram.handlers.messaging_pipeline.message_queue.flush_if_active",
+        new_callable=AsyncMock,
+    )
+    async def test_disabled_echo_drops_user_messages(
+        self, mock_flush, mock_process, bot, queue, lock
+    ):
+        with patch(
+            "ccgram.handlers.messaging_pipeline.message_queue.config."
+            "echo_user_messages",
+            False,
+        ):
+            result = await _handle_content_task(bot, 1, self._user_task(), queue, lock)
+
+        assert result == 0
+        assert result.outcome is DeliveryOutcome.INTENTIONALLY_DROPPED
+        mock_flush.assert_not_awaited()
+        mock_process.assert_not_awaited()
+
+    @patch(
+        "ccgram.handlers.messaging_pipeline.message_queue._process_content_task",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "ccgram.handlers.messaging_pipeline.message_queue.flush_if_active",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "ccgram.handlers.messaging_pipeline.message_queue.is_batch_eligible",
+        return_value=False,
+    )
+    async def test_enabled_echo_delivers_user_messages(
+        self, mock_eligible, mock_flush, mock_process, bot, queue, lock
+    ):
+        task = self._user_task()
+        with patch(
+            "ccgram.handlers.messaging_pipeline.message_queue.config."
+            "echo_user_messages",
+            True,
+        ):
+            result = await _handle_content_task(bot, 1, task, queue, lock)
+
+        assert result == 0
+        mock_flush.assert_awaited_once_with(bot, 1, task)
+        mock_process.assert_awaited_once_with(bot, 1, task)
+
+    @patch(
+        "ccgram.handlers.messaging_pipeline.message_queue._process_content_task",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "ccgram.handlers.messaging_pipeline.message_queue.flush_if_active",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "ccgram.handlers.messaging_pipeline.message_queue.is_batch_eligible",
+        return_value=False,
+    )
+    async def test_assistant_messages_are_never_gated(
+        self, mock_eligible, mock_flush, mock_process, bot, queue, lock
+    ):
+        """The gate is about the echo, not about muting the agent."""
+        task = _content_task("the agent answering")
+        with patch(
+            "ccgram.handlers.messaging_pipeline.message_queue.config."
+            "echo_user_messages",
+            False,
+        ):
+            await _handle_content_task(bot, 1, task, queue, lock)
+
+        mock_process.assert_awaited_once_with(bot, 1, task)
+
+    async def test_dropped_echo_still_settles_its_receipt(self, bot):
+        """A dropped echo must not stall the transcript watermark."""
+        from ccgram.handlers.messaging_pipeline import message_queue as mq
+
+        receipt = mq.DeliveryReceipt()
+        receipt.track()
+        receipt.close()
+        task = ContentTask(
+            window_id="@0",
+            parts=("\U0001f464 typed at the keyboard",),
+            role="user",
+            delivery_receipts=(receipt,),
+        )
+        with patch(
+            "ccgram.handlers.messaging_pipeline.message_queue.config."
+            "echo_user_messages",
+            False,
+        ):
+            result = await mq._dispatch(bot, 1, task, asyncio.Queue(), asyncio.Lock())
+        receipt.settle(result.outcome)
+
+        assert result.outcome is DeliveryOutcome.INTENTIONALLY_DROPPED
+        assert receipt.commit_ready is True
+
+
 class TestToolCallsGate:
     @patch(
         "ccgram.handlers.messaging_pipeline.message_queue._process_content_task",

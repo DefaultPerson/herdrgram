@@ -834,6 +834,17 @@ class TmuxManager:
         logger.debug("focus is unsupported on the tmux backend", window_id=window_id)
         return False
 
+    async def notify(self, title: str, body: str) -> bool:
+        """Always False — tmux has no desktop UI (``supports_notifications``).
+
+        tmux draws inside whatever terminal emulator hosts it, and a client may
+        be attached anywhere or nowhere, so there is no surface a notification
+        would reliably reach.
+        """
+        del body
+        logger.debug("notifications are unsupported on the tmux backend", title=title)
+        return False
+
     async def capture_pane_by_id(
         self,
         pane_id: str,

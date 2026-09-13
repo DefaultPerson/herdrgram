@@ -542,6 +542,11 @@ async def _handle_content_task(
         dispatch_state = DispatchState()
     if task.content_type == "thinking" and config.hide_thinking:
         return DispatchResult(0, DeliveryOutcome.INTENTIONALLY_DROPPED)
+    # Only terminal-typed input reaches here as a user task: a Telegram
+    # message is already suppressed upstream by its injection dedup, so this
+    # gate drops the 👤 echo without touching that path.
+    if task.role == "user" and not config.echo_user_messages:
+        return DispatchResult(0, DeliveryOutcome.INTENTIONALLY_DROPPED)
     if task.content_type in ("tool_use", "tool_result") and is_tool_calls_hidden(
         task.window_id
     ):

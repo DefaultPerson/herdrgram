@@ -225,6 +225,8 @@ All settings accept both CLI flags and environment variables. CLI flags take pre
 | `CCGRAM_HIDE_TOOL_CALLS` / `--hide-tool-calls`       | `false`                        | Set `true` to globally hide `tool_use`/`tool_result` messages (per-window override via `/toolcalls`) |
 | `CCGRAM_HIDE_THINKING` / `--hide-thinking`           | `false`                        | Set `true` to globally hide thinking messages                                                        |
 | `CCGRAM_HIDE_STATUS`                                 | `false`                        | Set `true` to suppress transient status bubbles; replies and controls remain available              |
+| `CCGRAM_ECHO_USER_MESSAGES`                          | `true`                         | Set `false` to drop the 👤 echo of text typed in the terminal (Telegram-sent text is unaffected)      |
+| `CCGRAM_HERDR_NOTIFY_ON_INJECT`                      | `false`                        | Set `true` to raise a silent desktop notification when a Telegram message lands in a pane (herdr)    |
 | `CCGRAM_VOICE_AUTOSEND`                              | `false`                        | Set `true` to send voice transcriptions without confirmation; transcription is still shown           |
 | `CCGRAM_PROMPT_MODE` / `--prompt-mode`               | `wrap`                         | Shell prompt marker: `wrap` (append `⌘N⌘`) or `replace` (legacy `{prefix}:N❯`)                       |
 | `CCGRAM_PROMPT_MARKER`                               | `ccgram`                       | Marker prefix used only by `replace` mode                                                            |
@@ -302,6 +304,12 @@ The raw provider transcript is retained; Jump to live does not delete or rewrite
 By default, thinking messages are forwarded to Telegram. Set `CCGRAM_HIDE_THINKING=true` or use `--hide-thinking` to hide them globally.
 
 This option does not hide responses, tool messages, or hook events. It has no per-window override.
+
+## Terminal Echo
+
+Text typed directly in the pane is mirrored into the topic with a 👤 prefix, so a topic reads as the whole conversation even when half of it happened at the keyboard. Set `CCGRAM_ECHO_USER_MESSAGES=false` to drop that echo and keep the topic to the agent's side.
+
+Messages you send *from* Telegram are not affected either way: CCGram already correlates each injected message with the transcript entry the agent writes for it and suppresses that one, so it is never echoed back to you twice.
 
 ## Voice Message Transcription
 
@@ -596,6 +604,12 @@ Responses longer than 4096 characters are sent as a `.txt` document attachment i
 Only backends that declare `supports_focus` can do this. herdr raises the exact pane resolved for the topic's guarded target (`herdr agent focus <terminal>`, falling back to `herdr tab focus <tab>` when the pane no longer publishes an agent); tmux and agterm reply `Focus is not supported by this multiplexer backend.` — a tmux client may be attached anywhere or nowhere, so there is no window to raise.
 
 Replies are one line: `👁 Focused in the terminal UI`, or `Could not focus: session not found.` when the session is gone. The same action is available as the optional 👁 **Show** toolbar button.
+
+### Notification on Delivery (opt-in)
+
+The other direction of the same idea: set `CCGRAM_HERDR_NOTIFY_ON_INJECT=true` and every message that lands in a pane from Telegram also raises a desktop notification titled `Telegram → <window label>` — the same label the topic is named after — with the first 200 characters of the message as the body. It is silent by design (`herdr notification show … --sound none`) — an ambient hint that something arrived from your phone, not an alert.
+
+Backends declare whether they can do this (`supports_notifications`); only herdr does today, so the flag is a no-op on tmux and agterm. The notification is best-effort in the strictest sense: it runs only after the send already succeeded, and a failure is logged at debug and otherwise ignored.
 
 ## File Delivery (`/send`)
 

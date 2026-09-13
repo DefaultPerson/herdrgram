@@ -43,6 +43,7 @@ CONTRACT_METHODS = (
     "agent_status",
     "split_window",
     "focus_window",
+    "notify",
     "find_window_by_id",
     "capture_pane",
     "capture_pane_by_id",
@@ -108,6 +109,7 @@ def test_backend_capabilities_shape(backend: Multiplexer) -> None:
     assert isinstance(caps.supports_workspace_selection, bool)
     assert isinstance(caps.native_topic_targets, bool)
     assert isinstance(caps.supports_focus, bool)
+    assert isinstance(caps.supports_notifications, bool)
 
 
 def test_tmux_capability_values() -> None:
@@ -124,11 +126,17 @@ def test_tmux_capability_values() -> None:
     assert caps.supports_workspace_selection is False
     assert caps.native_topic_targets is False
     assert caps.supports_focus is False
+    assert caps.supports_notifications is False
 
 
 async def test_tmux_focus_window_is_unsupported() -> None:
     """tmux has no UI to raise — focus_window() always reports failure."""
     assert await get_multiplexer("tmux").focus_window("@0") is False
+
+
+async def test_tmux_notify_is_unsupported() -> None:
+    """tmux has no desktop surface — notify() always reports failure."""
+    assert await get_multiplexer("tmux").notify("title", "body") is False
 
 
 async def test_tmux_agent_status_returns_none() -> None:
@@ -165,6 +173,7 @@ def test_herdr_capability_values() -> None:
     assert caps.supports_workspace_selection is True
     assert caps.native_topic_targets is True
     assert caps.supports_focus is True
+    assert caps.supports_notifications is True
 
 
 # ── window identity matching (WindowRef.matches / window_presence) ─────

@@ -109,6 +109,7 @@ _HERDR_CAPABILITIES = MultiplexerCapabilities(
     supports_workspace_selection=True,
     native_topic_targets=True,
     supports_focus=True,
+    supports_notifications=True,
 )
 
 # Filter for self-hosted / internal workspaces and tabs (e.g. ``__main__``).
@@ -1085,6 +1086,20 @@ class HerdrManager:
             return True
         await self._after_action_failure(window_id)
         return False
+
+    async def notify(self, title: str, body: str) -> bool:
+        """Draw a toast in the herdr UI; True when herdr accepted it.
+
+        ``notification show`` is window-level, not pane-level, so the target
+        has to be spelled out in *title*. Always silent (``--sound none``):
+        this is an ambient hint next to the panes, not an alert, and herdr's
+        own sounds stay reserved for the agent lifecycle. No session target is
+        resolved — a notification is not pane I/O and needs no guard.
+        """
+        args = ["notification", "show", title]
+        if body:
+            args += ["--body", body]
+        return await self._call_ok([*args, "--sound", "none"])
 
     async def rename_window(self, window_id: str, new_name: str) -> bool:
         try:

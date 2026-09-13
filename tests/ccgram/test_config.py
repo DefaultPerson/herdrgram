@@ -189,6 +189,42 @@ class TestHideThinking:
 
 
 @pytest.mark.usefixtures("_base_env")
+class TestEchoUserMessages:
+    def test_echo_user_messages_default_true(self, monkeypatch):
+        """Upstream mirrors terminal-typed input into the topic."""
+        monkeypatch.delenv("CCGRAM_ECHO_USER_MESSAGES", raising=False)
+        assert Config().echo_user_messages is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "no", "False", "NO"])
+    def test_echo_user_messages_disabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_ECHO_USER_MESSAGES", value)
+        assert Config().echo_user_messages is False
+
+    @pytest.mark.parametrize("value", ["", "1", "true", "yes", "anything"])
+    def test_echo_user_messages_enabled(self, monkeypatch, value):
+        """Only an explicit off value disables it — unset or junk stays on."""
+        monkeypatch.setenv("CCGRAM_ECHO_USER_MESSAGES", value)
+        assert Config().echo_user_messages is True
+
+
+@pytest.mark.usefixtures("_base_env")
+class TestHerdrNotifyOnInject:
+    def test_notify_on_inject_default_false(self, monkeypatch):
+        monkeypatch.delenv("CCGRAM_HERDR_NOTIFY_ON_INJECT", raising=False)
+        assert Config().herdr_notify_on_inject is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "True", "YES"])
+    def test_notify_on_inject_enabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_HERDR_NOTIFY_ON_INJECT", value)
+        assert Config().herdr_notify_on_inject is True
+
+    @pytest.mark.parametrize("value", ["", "0", "false", "no", "off"])
+    def test_notify_on_inject_disabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_HERDR_NOTIFY_ON_INJECT", value)
+        assert Config().herdr_notify_on_inject is False
+
+
+@pytest.mark.usefixtures("_base_env")
 class TestStatusMode:
     def test_default_is_system(self, monkeypatch):
         monkeypatch.delenv("CCGRAM_STATUS_MODE", raising=False)

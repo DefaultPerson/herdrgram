@@ -845,6 +845,17 @@ class AgtermManager:
         logger.debug("focus is unsupported on the agterm backend", window_id=window_id)
         return False
 
+    async def notify(self, title: str, body: str) -> bool:
+        """Always False — agterm declares ``supports_notifications=False``.
+
+        ``agtermctl`` exposes no notification surface, and the same reasoning
+        as ``create_window --no-select`` applies: automation must not put
+        anything in front of whoever is at the keyboard unasked.
+        """
+        del body
+        logger.debug("notifications are unsupported on the agterm backend", title=title)
+        return False
+
     @staticmethod
     def _abandon(window_id: str, reason: str, closed: bool) -> str:
         """Compose the failure message, saying so when the cleanup close failed.

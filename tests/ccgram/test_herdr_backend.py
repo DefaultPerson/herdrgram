@@ -586,6 +586,41 @@ async def test_focus_window_records_the_post_guard_race_when_both_calls_fail() -
     ]
 
 
+async def test_notify_shows_a_silent_toast_without_touching_a_target() -> None:
+    """UI-level, not pane I/O: no ``agent list`` guard, and never a sound."""
+    fake = FakeHerdr().on("notification", "show", out="")
+
+    assert await _manager(fake).notify("Telegram \u2192 topic", "hello")
+
+    assert fake.calls == [
+        [
+            "notification",
+            "show",
+            "Telegram \u2192 topic",
+            "--body",
+            "hello",
+            "--sound",
+            "none",
+        ]
+    ]
+
+
+async def test_notify_omits_an_empty_body() -> None:
+    fake = FakeHerdr().on("notification", "show", out="")
+
+    assert await _manager(fake).notify("Telegram \u2192 topic", "")
+
+    assert fake.calls == [
+        ["notification", "show", "Telegram \u2192 topic", "--sound", "none"]
+    ]
+
+
+async def test_notify_reports_a_refused_toast_without_raising() -> None:
+    fake = FakeHerdr().on("notification", "show", rc=1, err="no ui")
+
+    assert not await _manager(fake).notify("Telegram \u2192 topic", "hello")
+
+
 async def test_rename_window_refuses_shared_tab_without_renaming_siblings() -> None:
     first = _agent(pane_id="w7:p4", tab_id="w7:t3", value="session-a")
     sibling = _agent(pane_id="w7:p5", tab_id="w7:t3", value="session-b")

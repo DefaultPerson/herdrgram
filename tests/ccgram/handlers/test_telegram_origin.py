@@ -1,4 +1,6 @@
 import asyncio
+import contextlib
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +12,7 @@ from ccgram.handlers.telegram_origin import (
     consume_telegram_injection,
     forget_telegram_injection,
     remember_telegram_injection,
+    send_telegram_followup_to_window,
     send_telegram_to_window,
 )
 
@@ -211,6 +214,163 @@ async def test_origin_aware_send_rolls_back_on_exception() -> None:
         await send_telegram_to_window(1, "@1", 42, "hello")
 
     assert consume_telegram_injection(1, "@1", 42, "hello") is False
+
+
+# ── desktop notification on a delivered injection ──────────────────────
+
+
+def _fake_mux(*, supports: bool = True, notify: AsyncMock | None = None) -> MagicMock:
+    mux = MagicMock()
+    mux.capabilities.supports_notifications = supports
+    mux.notify = notify or AsyncMock(return_value=True)
+    return mux
+
+
+@contextlib.contextmanager
+def _notify_env(mux: MagicMock, *, enabled: bool = True) -> Iterator[None]:
+    """Wire the flag, the backend and the window label the notifier reads."""
+    with (
+        patch("ccgram.config.config.herdr_notify_on_inject", enabled),
+        patch("ccgram.multiplexer.multiplexer", mux),
+        patch(
+            "ccgram.window_query.view_window",
+            lambda window_id: MagicMock(window_name=f"label-{window_id}"),
+        ),
+    ):
+        yield
+
+
+@pytest.mark.asyncio
+async def test_delivered_injection_notifies_the_desktop() -> None:
+    mux = _fake_mux()
+    with (
+        patch(
+            "ccgram.handlers.telegram_origin.send_to_window",
+            AsyncMock(return_value=(True, "ok")),
+        ),
+        _notify_env(mux),
+    ):
+        assert await send_telegram_to_window(1, "@1", 42, "hello\nthere") == (
+            True,
+            "ok",
+        )
+
+    mux.notify.assert_awaited_once_with("Telegram \u2192 label-@1", "hello there")
+
+
+@pytest.mark.asyncio
+async def test_delivered_followup_notifies_the_desktop() -> None:
+    mux = _fake_mux()
+    with (
+        patch(
+            "ccgram.handlers.telegram_origin.send_followup_to_window",
+            AsyncMock(return_value=(True, "ok")),
+        ),
+        _notify_env(mux),
+    ):
+        assert await send_telegram_followup_to_window(1, "@1", 42, "hello") == (
+            True,
+            "ok",
+        )
+
+    mux.notify.assert_awaited_once_with("Telegram \u2192 label-@1", "hello")
+
+
+@pytest.mark.asyncio
+async def test_notification_body_is_capped() -> None:
+    mux = _fake_mux()
+    with (
+        patch(
+            "ccgram.handlers.telegram_origin.send_to_window",
+            AsyncMock(return_value=(True, "ok")),
+        ),
+        _notify_env(mux),
+    ):
+        await send_telegram_to_window(1, "@1", 42, "x" * 250)
+
+    body = mux.notify.await_args.args[1]
+    assert body == "x" * 200 + "\u2026"
+
+
+@pytest.mark.asyncio
+async def test_notification_falls_back_to_the_window_id() -> None:
+    """A window with no state yet is still nameable in the toast."""
+    mux = _fake_mux()
+    with (
+        patch(
+            "ccgram.handlers.telegram_origin.send_to_window",
+            AsyncMock(return_value=(True, "ok")),
+        ),
+        _notify_env(mux),
+        patch("ccgram.window_query.view_window", lambda window_id: None),
+    ):
+        await send_telegram_to_window(1, "@1", 42, "hello")
+
+    mux.notify.assert_awaited_once_with("Telegram \u2192 @1", "hello")
+
+
+@pytest.mark.asyncio
+async def test_notification_is_off_by_default() -> None:
+    mux = _fake_mux()
+    with (
+        patch(
+            "ccgram.handlers.telegram_origin.send_to_window",
+            AsyncMock(return_value=(True, "ok")),
+        ),
+        _notify_env(mux, enabled=False),
+    ):
+        await send_telegram_to_window(1, "@1", 42, "hello")
+
+    mux.notify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_backend_without_notifications_is_never_called() -> None:
+    mux = _fake_mux(supports=False)
+    with (
+        patch(
+            "ccgram.handlers.telegram_origin.send_to_window",
+            AsyncMock(return_value=(True, "ok")),
+        ),
+        _notify_env(mux),
+    ):
+        await send_telegram_to_window(1, "@1", 42, "hello")
+
+    mux.notify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_refused_send_does_not_notify() -> None:
+    mux = _fake_mux()
+    with (
+        patch(
+            "ccgram.handlers.telegram_origin.send_to_window",
+            AsyncMock(return_value=(False, "window gone")),
+        ),
+        _notify_env(mux),
+    ):
+        assert await send_telegram_to_window(1, "@1", 42, "hello") == (
+            False,
+            "window gone",
+        )
+
+    mux.notify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_failed_notification_never_fails_the_send() -> None:
+    """The message already landed — a broken toast must not undo that."""
+    mux = _fake_mux(notify=AsyncMock(side_effect=RuntimeError("no ui")))
+    with (
+        patch(
+            "ccgram.handlers.telegram_origin.send_to_window",
+            AsyncMock(return_value=(True, "ok")),
+        ),
+        _notify_env(mux),
+    ):
+        assert await send_telegram_to_window(1, "@1", 42, "hello") == (True, "ok")
+
+    assert consume_telegram_injection(1, "@1", 42, "hello") is True
 
 
 def test_pending_correlations_are_not_evicted_before_ttl() -> None:

@@ -52,6 +52,7 @@ def test_capabilities_full_snapshot(mgr: TmuxManager) -> None:
         "supports_workspace_selection": False,
         "native_topic_targets": False,
         "supports_focus": False,
+        "supports_notifications": False,
     }
 
 

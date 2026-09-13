@@ -159,6 +159,7 @@ def test_capability_values() -> None:
     assert caps.native_topic_targets is False
     assert caps.native_agent_status is True
     assert caps.supports_focus is False
+    assert caps.supports_notifications is False
 
 
 def test_agterm_native_status_is_reported() -> None:

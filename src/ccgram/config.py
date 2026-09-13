@@ -151,20 +151,8 @@ class Config:
         self._init_live_view()
         self._init_send()
         self._init_lifecycle()
+        self._init_transcript_visibility()
 
-        # Global default for hiding tool_use/tool_result content in Telegram.
-        # Shown by default; set CCGRAM_HIDE_TOOL_CALLS=true to suppress globally.
-        # Per-window override via WindowState.tool_call_visibility takes precedence.
-        self.hide_tool_calls: bool = os.getenv(
-            "CCGRAM_HIDE_TOOL_CALLS", "false"
-        ).lower() in ("1", "true", "yes")
-        self.hide_thinking: bool = os.getenv(
-            "CCGRAM_HIDE_THINKING", "false"
-        ).lower() in (
-            "1",
-            "true",
-            "yes",
-        )
         # Voice confirmation is safer by default; enable only for trusted,
         # low-friction dictation workflows.
         self.voice_autosend: bool = os.getenv(
@@ -234,6 +222,35 @@ class Config:
     def _init_send(self) -> None:
         self.send_search_depth: int = _parse_int_env("CCGRAM_SEND_SEARCH_DEPTH", 5)
         self.send_max_results: int = _parse_int_env("CCGRAM_SEND_MAX_RESULTS", 50)
+
+    def _init_transcript_visibility(self) -> None:
+        """Which transcript content reaches Telegram, and what the desk sees."""
+        # Global default for hiding tool_use/tool_result content in Telegram.
+        # Shown by default; set CCGRAM_HIDE_TOOL_CALLS=true to suppress globally.
+        # Per-window override via WindowState.tool_call_visibility takes precedence.
+        self.hide_tool_calls: bool = os.getenv(
+            "CCGRAM_HIDE_TOOL_CALLS", "false"
+        ).lower() in ("1", "true", "yes")
+        self.hide_thinking: bool = os.getenv(
+            "CCGRAM_HIDE_THINKING", "false"
+        ).lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        # Round-trip visibility between a topic and its terminal, both at the
+        # upstream default. CCGRAM_ECHO_USER_MESSAGES=false drops the 👤 echo
+        # of text typed in the pane itself (Telegram-originated input has its
+        # own dedup path and is unaffected either way);
+        # CCGRAM_HERDR_NOTIFY_ON_INJECT=true raises a desktop notification when
+        # a Telegram message lands in a pane, on backends that declare
+        # supports_notifications (herdr).
+        self.echo_user_messages: bool = os.getenv(
+            "CCGRAM_ECHO_USER_MESSAGES", "true"
+        ).lower() not in ("0", "false", "no")
+        self.herdr_notify_on_inject: bool = os.getenv(
+            "CCGRAM_HERDR_NOTIFY_ON_INJECT", ""
+        ).lower() in ("1", "true", "yes")
 
     def _init_lifecycle(self) -> None:
         self.autoclose_done_minutes: int = int(
