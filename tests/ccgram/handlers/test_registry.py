@@ -2,10 +2,12 @@ from unittest.mock import MagicMock
 
 import pytest
 from telegram.ext import (
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
     InlineQueryHandler,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -105,3 +107,65 @@ def test_register_all_command_handlers_precede_message_command_fallback():
 
     assert last_command_idx >= 0 and first_message_idx >= 0
     assert last_command_idx < first_message_idx
+
+
+# --- Ignored-thread gate (CCGRAM_IGNORED_THREAD_IDS) ---
+
+
+def _message_update(thread_id: int | None):
+    update = MagicMock()
+    update.effective_message = MagicMock()
+    update.effective_message.message_thread_id = thread_id
+    return update
+
+
+def test_no_gate_registered_when_nothing_is_ignored(monkeypatch):
+    """Upstream parity: an empty set adds no handler at all."""
+    from ccgram.handlers import registry
+
+    monkeypatch.setattr(registry.config, "ignored_thread_ids", frozenset())
+    app = _make_app()
+    register_all(app, filters.ALL)
+
+    assert not any(
+        isinstance(call.args[0], TypeHandler) for call in app.add_handler.call_args_list
+    )
+
+
+def test_gate_registered_first_in_early_group(monkeypatch):
+    from ccgram.handlers import registry
+
+    monkeypatch.setattr(registry.config, "ignored_thread_ids", frozenset({636135}))
+    app = _make_app()
+    register_all(app, filters.ALL)
+
+    first = app.add_handler.call_args_list[0]
+    assert isinstance(first.args[0], TypeHandler)
+    assert first.kwargs["group"] == registry.IGNORED_THREAD_GROUP
+    assert registry.IGNORED_THREAD_GROUP < -1  # before command tracing
+
+
+async def test_gate_stops_dispatch_for_ignored_thread(monkeypatch):
+    from ccgram.handlers import registry
+
+    monkeypatch.setattr(registry.config, "ignored_thread_ids", frozenset({636135}))
+    with pytest.raises(ApplicationHandlerStop):
+        await registry._drop_ignored_thread_update(_message_update(636135), None)
+
+
+@pytest.mark.parametrize("thread_id", [None, 1, 42])
+async def test_gate_lets_other_updates_through(monkeypatch, thread_id):
+    from ccgram.handlers import registry
+
+    monkeypatch.setattr(registry.config, "ignored_thread_ids", frozenset({636135}))
+    await registry._drop_ignored_thread_update(_message_update(thread_id), None)
+
+
+async def test_gate_ignores_updates_without_a_message(monkeypatch):
+    """Inline queries and inaccessible callback messages carry no thread."""
+    from ccgram.handlers import registry
+
+    monkeypatch.setattr(registry.config, "ignored_thread_ids", frozenset({636135}))
+    update = MagicMock()
+    update.effective_message = None
+    await registry._drop_ignored_thread_update(update, None)

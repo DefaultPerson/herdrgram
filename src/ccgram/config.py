@@ -31,6 +31,22 @@ def _parse_int_env(name: str, default: int) -> int:
         raise ValueError(f"{name} must be a valid integer: {exc}") from exc
 
 
+def _parse_int_set_env(name: str) -> frozenset[int]:
+    """Parse a comma-separated list of integers from an env var (empty = none)."""
+    values: set[int] = set()
+    for part in os.getenv(name, "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            values.add(int(part))
+        except ValueError as exc:
+            raise ValueError(
+                f"{name} must be a comma-separated list of integers: {exc}"
+            ) from exc
+    return frozenset(values)
+
+
 def _resolve_toolbar_path() -> str:
     """Resolve the toolbar TOML config path: env var → ~/.ccgram → empty.
 
@@ -342,6 +358,15 @@ class Config:
         self.herdr_require_native_session: bool = os.getenv(
             "CCGRAM_HERDR_REQUIRE_NATIVE_SESSION", ""
         ).lower() in ("1", "true", "yes")
+        # Topics ccgram must leave alone. Another producer that shares the bot
+        # token (a webhook relay, say) may own a topic in the same chat; every
+        # update from the threads listed here is dropped before any handler
+        # runs, so a stray message there never opens the window picker and the
+        # topic is never bound, renamed, closed or deleted by ccgram. Empty
+        # (the default) registers nothing and leaves upstream dispatch as is.
+        self.ignored_thread_ids: frozenset[int] = _parse_int_set_env(
+            "CCGRAM_IGNORED_THREAD_IDS"
+        )
 
     def _init_lifecycle(self) -> None:
         self.autoclose_done_minutes: int = int(

@@ -16,14 +16,17 @@ import structlog
 from telegram import Update
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
     InlineQueryHandler,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 from telegram.ext._utils.types import HandlerCallback
 
+from ..config import config
 from .callback_registry import dispatch as _dispatch_callback
 from .callback_registry import load_handlers as _load_callback_handlers
 from .agent_command import agent_command
@@ -73,6 +76,28 @@ async def _log_command_update(update: Update, _context: object) -> None:
     )
 
 
+IGNORED_THREAD_GROUP: int = -10
+"""Handler group of the ignored-thread gate: before command tracing (-1)."""
+
+
+def _update_thread_id(update: Update) -> int | None:
+    """Thread the update belongs to, or None (no message, General, inaccessible)."""
+    message = update.effective_message
+    return getattr(message, "message_thread_id", None) if message else None
+
+
+async def _drop_ignored_thread_update(update: Update, _context: object) -> None:
+    """Stop dispatch for any update from a thread in CCGRAM_IGNORED_THREAD_IDS.
+
+    Registered in an early group, so the stop reaches every later handler:
+    text, commands, callbacks, topic lifecycle events and media alike.
+    """
+    thread_id = _update_thread_id(update)
+    if thread_id is not None and thread_id in config.ignored_thread_ids:
+        logger.debug("Dropping update from ignored thread", thread_id=thread_id)
+        raise ApplicationHandlerStop
+
+
 @dataclass(frozen=True)
 class CommandSpec:
     """Specification for a single PTB CommandHandler registration."""
@@ -91,6 +116,12 @@ def register_all(
     explicit CommandHandlers must precede the COMMAND-fallback
     MessageHandler, which must precede the TEXT MessageHandler.
     """
+    if config.ignored_thread_ids:
+        application.add_handler(
+            TypeHandler(Update, _drop_ignored_thread_update),
+            group=IGNORED_THREAD_GROUP,
+        )
+
     command_specs: list[CommandSpec] = [
         CommandSpec("start", new_command),
         CommandSpec("history", history_command),

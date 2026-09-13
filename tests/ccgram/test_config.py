@@ -457,3 +457,30 @@ class TestPollingConfig:
         assert getattr(Config(), attr) == expected
         monkeypatch.setenv(env_var, clamp_str)
         assert getattr(Config(), attr) == clamped
+
+
+@pytest.mark.usefixtures("_base_env")
+class TestIgnoredThreadIds:
+    def test_default_empty(self, monkeypatch):
+        """Upstream dispatches every thread; nothing is ignored by default."""
+        monkeypatch.delenv("CCGRAM_IGNORED_THREAD_IDS", raising=False)
+        assert Config().ignored_thread_ids == frozenset()
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("636135", frozenset({636135})),
+            ("1, 2 ,3", frozenset({1, 2, 3})),
+            (",,7,,", frozenset({7})),
+            ("", frozenset()),
+            ("   ", frozenset()),
+        ],
+    )
+    def test_parses_comma_separated_integers(self, monkeypatch, value, expected):
+        monkeypatch.setenv("CCGRAM_IGNORED_THREAD_IDS", value)
+        assert Config().ignored_thread_ids == expected
+
+    def test_rejects_non_integer(self, monkeypatch):
+        monkeypatch.setenv("CCGRAM_IGNORED_THREAD_IDS", "636135,github")
+        with pytest.raises(ValueError, match="CCGRAM_IGNORED_THREAD_IDS"):
+            Config()
