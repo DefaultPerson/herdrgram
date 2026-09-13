@@ -134,3 +134,64 @@ class TestTopicEditedIgnoredEdits:
 
         assert _topic_names[(CHAT_ID, THREAD_ID)] == "old-name"
         router.set_display_name.assert_not_called()
+
+
+class TestMuxRenameFromTelegramDisabled:
+    """CCGRAM_MUX_RENAME_FROM_TELEGRAM=false — names flow one way only."""
+
+    @pytest.fixture
+    def _one_way(self, monkeypatch):
+        from ccgram.config import config
+
+        monkeypatch.setattr(config, "mux_rename_from_telegram", False)
+        yield
+
+    async def test_rename_never_reaches_the_multiplexer(
+        self, _one_way, mux: MagicMock, router: MagicMock, session: MagicMock
+    ) -> None:
+        """On herdr this would be a ``tab rename``, relabelling every pane in it."""
+        router.get_window_for_chat_thread.return_value = "herdr-session-v1-abc"
+        router.get_display_name.return_value = "2"
+
+        await topic_edited_handler(_make_update("mine"), MagicMock())
+
+        mux.rename_window.assert_not_called()
+
+    async def test_stored_display_name_is_left_alone(
+        self, _one_way, mux: MagicMock, router: MagicMock, session: MagicMock
+    ) -> None:
+        """Recording it locally would be undone by the next live-listing sync."""
+        _topic_names[(CHAT_ID, THREAD_ID)] = "2"
+        router.get_window_for_chat_thread.return_value = "herdr-session-v1-abc"
+        router.get_display_name.return_value = "2"
+
+        await topic_edited_handler(_make_update("mine"), MagicMock())
+
+        session.set_display_name.assert_not_called()
+        assert _topic_names[(CHAT_ID, THREAD_ID)] == "2"
+
+    async def test_unbound_topic_is_still_ignored_first(
+        self, _one_way, mux: MagicMock, router: MagicMock
+    ) -> None:
+        """The flag changes the push, not the guards in front of it."""
+        router.get_window_for_chat_thread.return_value = None
+
+        await topic_edited_handler(_make_update("mine"), MagicMock())
+
+        mux.rename_window.assert_not_called()
+
+
+class TestMuxRenameFromTelegramDefault:
+    async def test_default_still_pushes_the_rename(
+        self, mux: MagicMock, router: MagicMock, session: MagicMock
+    ) -> None:
+        """The flag defaults to on: upstream behaviour is untouched."""
+        from ccgram.config import config
+
+        assert config.mux_rename_from_telegram is True
+        router.get_window_for_chat_thread.return_value = "@0"
+        router.get_display_name.return_value = "old-name"
+
+        await topic_edited_handler(_make_update("new-name"), MagicMock())
+
+        mux.rename_window.assert_called_once_with("@0", "new-name")

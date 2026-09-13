@@ -590,6 +590,15 @@ async def topic_edited_handler(
 
     Ignores icon-only edits (name is None) and emoji-only changes from the bot
     itself (clean name unchanged after stripping prefixes).
+
+    With ``CCGRAM_MUX_RENAME_FROM_TELEGRAM=false`` the rename stops here. On
+    herdr the push is a ``tab rename``, which relabels the tab for every pane
+    in it — a topic rename would silently rename a sibling agent's tab too.
+    The rename is dropped rather than recorded locally: ccgram's display name
+    is resynced from the live listing every poll cycle, so a locally stored
+    name would be overwritten seconds later and the topic renamed back, which
+    is worse than not acting. The Telegram-side title the user typed is left
+    untouched, and the multiplexer label wins again the next time it changes.
     """
     user = update.effective_user
     if not user or not config.is_user_allowed(user.id):
@@ -628,6 +637,15 @@ async def topic_edited_handler(
     if current_display and strip_emoji_prefix(current_display) == clean_name:
         logger.debug(
             "Topic edited: name unchanged after strip, skipping (thread=%d)", thread_id
+        )
+        return
+
+    if not config.mux_rename_from_telegram:
+        logger.info(
+            "topic_rename_not_pushed_to_multiplexer",
+            window_id=window_id,
+            thread_id=thread_id,
+            name=clean_name,
         )
         return
 

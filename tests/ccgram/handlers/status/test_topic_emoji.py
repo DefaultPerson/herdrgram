@@ -807,3 +807,128 @@ class TestFirstPaintPacing:
 
         assert -100 not in _disabled_chats
         assert _last_chat_edit[-100] == (0.0, (-100, 1))
+
+
+class TestPlainTopicNames:
+    """CCGRAM_TOPIC_NAME_DECORATIONS=false — the title is the clean name."""
+
+    @pytest.fixture
+    def _plain(self, monkeypatch):
+        from ccgram.config import config
+
+        monkeypatch.setattr(config, "topic_name_decorations", False)
+        yield
+
+    @pytest.mark.parametrize("state", ["active", "idle", "done", "dead"])
+    async def test_state_change_never_renames_the_topic(
+        self, _plain, state: str
+    ) -> None:
+        """No badge means no rename: a transition changes nothing visible."""
+        bot = AsyncMock()
+        with patch(_PATCH_MONOTONIC, return_value=0.0):
+            await update_topic_emoji(bot, -100, 42, "idle", "myproject")
+        bot.edit_forum_topic.reset_mock()
+
+        await _debounced_update(bot, -100, 42, state, "myproject")
+
+        bot.edit_forum_topic.assert_not_called()
+
+    async def test_first_paint_writes_the_bare_name(self, _plain) -> None:
+        """A topic inherited with an emoji prefix is repaired to the clean name."""
+        bot = AsyncMock()
+        with patch(_PATCH_MONOTONIC, return_value=0.0):
+            await update_topic_emoji(bot, -100, 42, "active", "myproject")
+
+        bot.edit_forum_topic.assert_called_once_with(
+            chat_id=-100,
+            message_thread_id=42,
+            name="myproject",
+        )
+
+    async def test_display_name_change_still_reaches_telegram(self, _plain) -> None:
+        """The herdr → Telegram direction is the one that stays open."""
+        bot = AsyncMock()
+        with patch(_PATCH_MONOTONIC, return_value=0.0):
+            await update_topic_emoji(bot, -100, 42, "active", "old-tab")
+        bot.edit_forum_topic.reset_mock()
+
+        with patch(_PATCH_MONOTONIC, return_value=1.0):
+            await update_topic_emoji(bot, -100, 42, "active", "new-tab")
+
+        bot.edit_forum_topic.assert_called_once_with(
+            chat_id=-100,
+            message_thread_id=42,
+            name="new-tab",
+        )
+
+    async def test_rename_carries_no_mode_or_rc_badge(self, _plain) -> None:
+        """YOLO and Remote Control badges go with the state emoji."""
+        bot = AsyncMock()
+        with (
+            patch(f"{MOD}._resolve_approval_mode", return_value="yolo"),
+            patch(f"{MOD}._resolve_rc_mode", return_value=True),
+            patch(_PATCH_MONOTONIC, return_value=0.0),
+        ):
+            await update_topic_emoji(bot, -100, 42, "active", "myproject")
+
+        bot.edit_forum_topic.assert_called_once_with(
+            chat_id=-100,
+            message_thread_id=42,
+            name="myproject",
+        )
+
+    async def test_sync_topic_name_writes_the_bare_name(self, _plain) -> None:
+        """/sync repairs a stale title without reintroducing the emoji."""
+        from ccgram.handlers.status.topic_emoji import _topic_states
+
+        bot = AsyncMock()
+        _topic_states[(-100, 42)] = ("idle", "normal", False)
+        with (
+            patch(f"{MOD}._resolve_approval_mode", return_value="yolo"),
+            patch(f"{MOD}._resolve_rc_mode", return_value=True),
+        ):
+            await sync_topic_name(bot, -100, 42, f"{EMOJI_IDLE} ccgram-codex")
+
+        bot.edit_forum_topic.assert_called_once_with(
+            chat_id=-100,
+            message_thread_id=42,
+            name="ccgram-codex",
+        )
+
+    @pytest.mark.parametrize("mode", ["normal", "yolo"])
+    def test_format_topic_name_for_mode_drops_the_badge(
+        self, _plain, mode: str
+    ) -> None:
+        """The four other edit_forum_topic call sites go through this helper."""
+        assert format_topic_name_for_mode("myproject", mode) == "myproject"
+
+    def test_strip_emoji_prefix_is_a_no_op_on_a_bare_name(self, _plain) -> None:
+        """Names that never had a prefix survive the round trip unchanged."""
+        assert strip_emoji_prefix("2 ▸ p2") == "2 ▸ p2"
+        assert strip_emoji_prefix("mexc-tracker") == "mexc-tracker"
+
+    def test_stored_name_update_still_works(self, _plain) -> None:
+        from ccgram.handlers.status.topic_emoji import (
+            _topic_names,
+            update_stored_topic_name,
+        )
+
+        update_stored_topic_name(-100, 42, "bots")
+
+        assert _topic_names[(-100, 42)] == "bots"
+
+
+class TestDecoratedTopicNamesRemainDefault:
+    async def test_default_still_prefixes_the_state_emoji(self) -> None:
+        """The flag defaults to on: upstream behaviour is untouched."""
+        from ccgram.config import config
+
+        assert config.topic_name_decorations is True
+        bot = AsyncMock()
+        await _debounced_update(bot, -100, 42, "active", "myproject")
+
+        bot.edit_forum_topic.assert_called_once_with(
+            chat_id=-100,
+            message_thread_id=42,
+            name=f"{EMOJI_ACTIVE} myproject",
+        )

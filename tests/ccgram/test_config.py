@@ -225,6 +225,60 @@ class TestHerdrNotifyOnInject:
 
 
 @pytest.mark.usefixtures("_base_env")
+class TestTopicNameDecorations:
+    def test_decorations_default_true(self, monkeypatch):
+        """Upstream prefixes a state emoji and appends RC/YOLO badges."""
+        monkeypatch.delenv("CCGRAM_TOPIC_NAME_DECORATIONS", raising=False)
+        assert Config().topic_name_decorations is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "no", "False", "NO"])
+    def test_decorations_disabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_TOPIC_NAME_DECORATIONS", value)
+        assert Config().topic_name_decorations is False
+
+    @pytest.mark.parametrize("value", ["", "1", "true", "yes", "anything"])
+    def test_decorations_enabled(self, monkeypatch, value):
+        """Only an explicit off value disables it — unset or junk stays on."""
+        monkeypatch.setenv("CCGRAM_TOPIC_NAME_DECORATIONS", value)
+        assert Config().topic_name_decorations is True
+
+
+@pytest.mark.usefixtures("_base_env")
+class TestMuxRenameFromTelegram:
+    def test_rename_default_true(self, monkeypatch):
+        """Upstream pushes a Telegram topic rename into the multiplexer."""
+        monkeypatch.delenv("CCGRAM_MUX_RENAME_FROM_TELEGRAM", raising=False)
+        assert Config().mux_rename_from_telegram is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "no", "False", "NO"])
+    def test_rename_disabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_MUX_RENAME_FROM_TELEGRAM", value)
+        assert Config().mux_rename_from_telegram is False
+
+    @pytest.mark.parametrize("value", ["", "1", "true", "yes", "anything"])
+    def test_rename_enabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_MUX_RENAME_FROM_TELEGRAM", value)
+        assert Config().mux_rename_from_telegram is True
+
+
+@pytest.mark.usefixtures("_base_env")
+class TestHerdrTopicLabel:
+    def test_default_is_full(self, monkeypatch):
+        monkeypatch.delenv("CCGRAM_HERDR_TOPIC_LABEL", raising=False)
+        assert Config().herdr_topic_label == "full"
+
+    @pytest.mark.parametrize("value", ["tab", "TAB", " tab "])
+    def test_tab_style_is_accepted(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_HERDR_TOPIC_LABEL", value)
+        assert Config().herdr_topic_label == "tab"
+
+    @pytest.mark.parametrize("value", ["", "pane", "workspace", "1"])
+    def test_unknown_value_falls_back_to_full(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_HERDR_TOPIC_LABEL", value)
+        assert Config().herdr_topic_label == "full"
+
+
+@pytest.mark.usefixtures("_base_env")
 class TestStatusMode:
     def test_default_is_system(self, monkeypatch):
         monkeypatch.delenv("CCGRAM_STATUS_MODE", raising=False)

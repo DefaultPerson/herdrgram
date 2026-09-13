@@ -14,6 +14,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .multiplexer.topic_mapping import TOPIC_LABEL_FULL, TOPIC_LABEL_TAB
 from .utils import ccgram_dir
 
 logger = structlog.get_logger()
@@ -152,6 +153,7 @@ class Config:
         self._init_send()
         self._init_lifecycle()
         self._init_transcript_visibility()
+        self._init_topic_naming()
 
         # Voice confirmation is safer by default; enable only for trusted,
         # low-friction dictation workflows.
@@ -251,6 +253,38 @@ class Config:
         self.herdr_notify_on_inject: bool = os.getenv(
             "CCGRAM_HERDR_NOTIFY_ON_INJECT", ""
         ).lower() in ("1", "true", "yes")
+
+    def _init_topic_naming(self) -> None:
+        """How a topic is titled, and which side of the bridge may rename it.
+
+        All three default to the upstream behaviour.
+        """
+        # Upstream prefixes every topic title with a state emoji and appends an
+        # RC/YOLO badge, which means an editForumTopic call (and a "topic
+        # renamed" service message) on every state change.
+        # CCGRAM_TOPIC_NAME_DECORATIONS=false renders the bare display name
+        # instead; a state change then produces no rename at all, while a
+        # change of the display name itself is still synced.
+        self.topic_name_decorations: bool = os.getenv(
+            "CCGRAM_TOPIC_NAME_DECORATIONS", "true"
+        ).lower() not in ("0", "false", "no")
+        # Upstream pushes a Telegram topic rename back into the multiplexer.
+        # On herdr that is a ``tab rename``, which relabels the tab for every
+        # pane sharing it. CCGRAM_MUX_RENAME_FROM_TELEGRAM=false drops the
+        # rename instead, leaving names to flow multiplexer → Telegram only.
+        self.mux_rename_from_telegram: bool = os.getenv(
+            "CCGRAM_MUX_RENAME_FROM_TELEGRAM", "true"
+        ).lower() not in ("0", "false", "no")
+        # herdr topic titles. "full" (default) keeps the upstream
+        # "<Provider> ▸ <workspace> ▸ <tab> ▸ <pane>" label; "tab" uses the
+        # herdr tab label on its own, so a topic reads exactly like the herdr
+        # sidebar. Invalid values fall back to "full".
+        raw_topic_label = os.getenv("CCGRAM_HERDR_TOPIC_LABEL", "").strip().lower()
+        self.herdr_topic_label: str = (
+            raw_topic_label
+            if raw_topic_label in (TOPIC_LABEL_FULL, TOPIC_LABEL_TAB)
+            else TOPIC_LABEL_FULL
+        )
 
     def _init_lifecycle(self) -> None:
         self.autoclose_done_minutes: int = int(

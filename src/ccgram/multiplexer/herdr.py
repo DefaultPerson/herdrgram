@@ -39,6 +39,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections import Counter
 from collections.abc import (
     AsyncGenerator,
     Awaitable,
@@ -51,6 +52,7 @@ from pathlib import Path
 
 import structlog
 
+from ..config import config
 from ..herdr_targets import HERDR_SESSION_TARGET_PREFIX, is_herdr_session_target
 from .base import (
     AgentStatus,
@@ -69,7 +71,11 @@ from .herdr_events import (
     open_socket_stream,
     translate_event,
 )
-from .topic_mapping import format_agent_topic_prefix
+from .topic_mapping import (
+    TOPIC_LABEL_TAB,
+    format_agent_topic_prefix,
+    format_tab_topic_label,
+)
 
 __all__ = [
     "HERDR_PROTOCOL_VERSION",
@@ -746,6 +752,12 @@ class HerdrManager:
     ) -> list[WindowRef]:
         """Project one agent snapshot with best-effort live labels."""
         labels = await self._reconciliation_labels(records)
+        # How many agents herdr reports in each tab, from this same snapshot:
+        # the "tab" label style needs the pane only where a tab is shared, and
+        # a per-record lookup would answer that from a different moment.
+        agents_per_tab = Counter(
+            (record.workspace_id, record.tab_id) for record in records
+        )
         refs: list[WindowRef] = []
         for record in records:
             label = labels.get((record.workspace_id, record.tab_id))
@@ -775,15 +787,20 @@ class HerdrManager:
             if internal and not include_internal:
                 continue
             pane = record.pane_id.rsplit(":", 1)[-1]
+            if config.herdr_topic_label == TOPIC_LABEL_TAB:
+                shared = agents_per_tab[(record.workspace_id, record.tab_id)] > 1
+                label_text = format_tab_topic_label(tab_label, pane if shared else "")
+            else:
+                label_text = format_agent_topic_prefix(
+                    workspace_label,
+                    tab_label,
+                    pane,
+                    provider=record.composite.agent,
+                )
             refs.append(
                 self._live_ref(
                     record,
-                    format_agent_topic_prefix(
-                        workspace_label,
-                        tab_label,
-                        pane,
-                        provider=record.composite.agent,
-                    ),
+                    label_text,
                     adoptable=not internal,
                 )
             )

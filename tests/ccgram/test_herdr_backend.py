@@ -2073,3 +2073,126 @@ async def test_an_unrecognised_sessionless_agent_does_not_blank_the_listing() ->
 
     assert windows is not None, "an unaddressable agent is not an unaccountable gap"
     assert [w.window_id for w in windows] == [_target("session-a")]
+
+
+# ── topic label style (CCGRAM_HERDR_TOPIC_LABEL) ───────────────────────
+
+
+def _labelled_fake(
+    *records: Mapping[str, object],
+    tab_labels: Mapping[str, str],
+    workspace_label: str = "hm-dao-bots",
+) -> FakeHerdr:
+    """A live snapshot whose tabs carry the labels herdr would report."""
+    workspaces = {
+        str(record.get("workspace_id", "w2")): {
+            "workspace_id": record.get("workspace_id", "w2"),
+            "label": workspace_label,
+        }
+        for record in records
+    }
+    tabs = [{"tab_id": tab_id, "label": label} for tab_id, label in tab_labels.items()]
+    return (
+        FakeHerdr()
+        .on("agent", "list", out=_agents(*records))
+        .on("workspace", "list", out=_result(workspaces=list(workspaces.values())))
+        .on("tab", "list", out=_result(tabs=tabs))
+    )
+
+
+@pytest.fixture
+def tab_label_style(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Select CCGRAM_HERDR_TOPIC_LABEL=tab for one test."""
+    from ccgram.config import config
+
+    monkeypatch.setattr(config, "herdr_topic_label", "tab")
+
+
+async def test_full_label_style_is_the_default() -> None:
+    """Nothing changes for anyone who does not set the flag."""
+    windows = await _manager(
+        _labelled_fake(_agent(), tab_labels={"w2:t1": "mexc-tracker"})
+    ).list_windows()
+
+    assert [w.window_name for w in windows] == [
+        "Claude ▸ hm-dao-bots ▸ mexc-tracker ▸ p1"
+    ]
+
+
+async def test_tab_style_names_a_topic_after_its_tab(tab_label_style: None) -> None:
+    """A tab the user named in herdr reads the same in the topic list."""
+    windows = await _manager(
+        _labelled_fake(_agent(), tab_labels={"w2:t1": "mexc-tracker"})
+    ).list_windows()
+
+    assert [w.window_name for w in windows] == ["mexc-tracker"]
+
+
+async def test_tab_style_keeps_the_bare_number_of_an_unnamed_tab(
+    tab_label_style: None,
+) -> None:
+    """herdr reports "2" for a tab nobody named; parity means using it."""
+    windows = await _manager(
+        _labelled_fake(_agent(), tab_labels={"w2:t1": "2"})
+    ).list_windows()
+
+    assert [w.window_name for w in windows] == ["2"]
+
+
+async def test_tab_style_disambiguates_only_a_shared_tab(
+    tab_label_style: None,
+) -> None:
+    """Two agents in one tab need the pane; two tabs do not."""
+    shared_a = _agent(pane_id="w2:p1", tab_id="w2:t9", value="one")
+    shared_b = _agent(pane_id="w2:p2", tab_id="w2:t9", value="two")
+    alone = _agent(pane_id="w2:p3", tab_id="w2:t1", value="three")
+
+    windows = await _manager(
+        _labelled_fake(
+            shared_a,
+            shared_b,
+            alone,
+            tab_labels={"w2:t9": "3", "w2:t1": "bots"},
+        )
+    ).list_windows()
+
+    assert [w.window_name for w in windows] == ["3 ▸ p1", "3 ▸ p2", "bots"]
+
+
+async def test_tab_style_survives_a_lookup_by_target(tab_label_style: None) -> None:
+    """The single-window lookup must not disagree with the listing."""
+    shared_a = _agent(pane_id="w2:p1", tab_id="w2:t9", value="one")
+    shared_b = _agent(pane_id="w2:p2", tab_id="w2:t9", value="two")
+    fake = _labelled_fake(shared_a, shared_b, tab_labels={"w2:t9": "3"})
+
+    found = await _manager(fake).find_window_by_id(_target("two"))
+
+    assert found is not None
+    assert found.window_name == "3 ▸ p2"
+
+
+async def test_tab_style_follows_a_herdr_rename(tab_label_style: None) -> None:
+    """herdr → Telegram is the direction that stays open: relabel, resync."""
+    before = await _manager(
+        _labelled_fake(_agent(), tab_labels={"w2:t1": "2"})
+    ).list_windows_for_reconciliation()
+    after = await _manager(
+        _labelled_fake(_agent(), tab_labels={"w2:t1": "bots"})
+    ).list_windows_for_reconciliation()
+
+    assert before is not None and after is not None
+    assert [w.window_name for w in before] == ["2"]
+    assert [w.window_name for w in after] == ["bots"]
+    assert [w.window_id for w in before] == [w.window_id for w in after]
+
+
+async def test_tab_style_still_hides_internal_tabs(tab_label_style: None) -> None:
+    """The ``__*__`` guard is on the label, and the label is now the name."""
+    mine = _agent(pane_id="w2:p1", tab_id="w2:tD", value="internal")
+    theirs = _agent(pane_id="w2:p2", tab_id="w2:t1", value="live")
+
+    windows = await _manager(
+        _labelled_fake(mine, theirs, tab_labels={"w2:tD": "__ccgram__", "w2:t1": "2"})
+    ).list_windows()
+
+    assert [w.window_name for w in windows] == ["2"]

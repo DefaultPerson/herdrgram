@@ -13,7 +13,10 @@ import pytest
 
 from ccgram.multiplexer.base import MultiplexerCapabilities, WindowRef
 from ccgram.multiplexer.topic_mapping import (
+    TOPIC_LABEL_FULL,
+    TOPIC_LABEL_TAB,
     format_agent_topic_prefix,
+    format_tab_topic_label,
     is_agent_topic_window,
 )
 from ccgram.session import SessionManager
@@ -154,6 +157,38 @@ class TestFormatAgentTopicPrefix:
             format_agent_topic_prefix("ccgram", "1", "p3", provider="pi")
             == "Pi ▸ ccgram ▸ 1 ▸ p3"
         )
+
+
+class TestFormatTabTopicLabel:
+    @pytest.mark.parametrize(
+        ("tab", "pane", "expected"),
+        [
+            # A tab the user named reads exactly as it does in the sidebar.
+            ("mexc-tracker", "", "mexc-tracker"),
+            ("bots", "", "bots"),
+            # An unnamed tab keeps the bare number herdr shows for it.
+            ("2", "", "2"),
+            # Agents sharing one tab are told apart by the pane, and only then.
+            ("2", "p2", "2 ▸ p2"),
+            ("3", "p3", "3 ▸ p3"),
+            # Missing parts degrade without a stray separator.
+            ("", "p2", "p2"),
+            ("", "", ""),
+            # Whitespace is trimmed off every part.
+            ("  bots  ", "  p4  ", "bots ▸ p4"),
+        ],
+    )
+    def test_renders_the_tab_label(self, tab: str, pane: str, expected: str) -> None:
+        assert format_tab_topic_label(tab, pane) == expected
+
+    def test_carries_no_provider_or_workspace(self) -> None:
+        """The whole point of the style: nothing but what herdr shows."""
+        label = format_tab_topic_label("mexc-tracker")
+        assert "Claude" not in label
+        assert "hm-dao-bots" not in label
+
+    def test_style_names_are_distinct(self) -> None:
+        assert TOPIC_LABEL_FULL != TOPIC_LABEL_TAB
 
 
 @pytest.fixture

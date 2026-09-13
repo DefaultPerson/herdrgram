@@ -22,6 +22,12 @@ from .base import MultiplexerCapabilities, WindowRef
 # Separates workspace, tab, and optional pane parts in a Herdr topic title.
 TOPIC_PREFIX_SEPARATOR = " ▸ "
 
+# Herdr topic-label styles, selected by ``CCGRAM_HERDR_TOPIC_LABEL``.
+#   full — "<Provider> ▸ <workspace> ▸ <tab> ▸ <pane>" (upstream)
+#   tab  — the herdr tab label alone, so the topic list reads like the sidebar
+TOPIC_LABEL_FULL = "full"
+TOPIC_LABEL_TAB = "tab"
+
 
 def format_agent_topic_prefix(
     workspace: str, tab: str, pane: str = "", *, provider: str = ""
@@ -39,6 +45,21 @@ def format_agent_topic_prefix(
     parts = [
         part.strip() for part in (provider_label, workspace, tab, pane) if part.strip()
     ]
+    return TOPIC_PREFIX_SEPARATOR.join(parts)
+
+
+def format_tab_topic_label(tab: str, pane: str = "") -> str:
+    """Render a Herdr topic label as the tab label the user sees in herdr.
+
+    The tab label is used verbatim, including the bare number herdr gives a
+    tab nobody has named: the point of this style is that a topic list and the
+    herdr sidebar read the same. *pane* is appended only when the caller knows
+    the tab holds more than one agent — without it, two agents sharing a tab
+    would render two topics with one name.
+
+    Empty parts degrade gracefully, as in ``format_agent_topic_prefix``.
+    """
+    parts = [part.strip() for part in (tab, pane) if part.strip()]
     return TOPIC_PREFIX_SEPARATOR.join(parts)
 
 

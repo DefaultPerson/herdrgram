@@ -13,6 +13,13 @@ interval (poll path defers, /sync sleeps it out) and pauses a chat's
 renames entirely for a cooldown after flood control (#199). Gracefully
 degrades when the bot lacks editForumTopic permission.
 
+``CCGRAM_TOPIC_NAME_DECORATIONS=false`` turns all of that presentation off:
+a topic title is then exactly its clean display name, and a state change
+produces no ``editForumTopic`` call at all. Only a change of the display name
+itself — a herdr tab renamed, a tmux window renamed — still reaches Telegram,
+which is what makes the herdr → Telegram direction keep working while the
+reverse direction is closed.
+
 Key functions:
   - update_topic_emoji: Update emoji for a specific topic (debounced)
   - clear_topic_emoji_state: Clean up tracking for a topic
@@ -217,6 +224,34 @@ def _should_apply_update(
     return True
 
 
+def _should_rename_now(
+    key: tuple[int, int],
+    state: str,
+    state_token: tuple[str, str, bool],
+    *,
+    decorated: bool,
+    name_changed: bool,
+    now: float,
+) -> bool:
+    """Return True when this update is worth an ``editForumTopic`` call.
+
+    A decorated title carries the state, so a transition *is* a rename and the
+    debounce / first-paint machinery decides when it lands. An undecorated
+    title carries nothing but the clean name, so a transition renames nothing
+    and would only post a "topic renamed" service message for a no-op: only a
+    change of the display name itself still reaches Telegram.
+    """
+    if not decorated:
+        return name_changed
+    return _should_apply_update(
+        key,
+        state,
+        state_token,
+        name_changed=name_changed,
+        now=now,
+    )
+
+
 def _compose_topic_name(
     clean_name: str,
     *,
@@ -224,7 +259,16 @@ def _compose_topic_name(
     approval_mode: str = "normal",
     rc_active: bool = False,
 ) -> str:
-    """Build the full Telegram topic title from state badges and clean name."""
+    """Build the full Telegram topic title from state badges and clean name.
+
+    With ``CCGRAM_TOPIC_NAME_DECORATIONS=false`` the title *is* the clean name:
+    no state emoji, no RC or YOLO badge. Every title this module produces, and
+    every one produced by ``format_topic_name_for_mode`` for the four other
+    ``edit_forum_topic`` call sites, goes through here, so the flag is honored
+    in one place.
+    """
+    if not config.topic_name_decorations:
+        return clean_name
     parts: list[str] = []
     emoji = _state_emoji_map().get(state, "")
     if emoji:
@@ -422,10 +466,12 @@ async def update_topic_emoji(
     now = time.monotonic()
     if _flood_paused(chat_id, now):
         return
-    if not _should_apply_update(
+    decorated = config.topic_name_decorations
+    if not _should_rename_now(
         key,
         state,
         state_token,
+        decorated=decorated,
         name_changed=name_changed,
         now=now,
     ):
@@ -438,10 +484,11 @@ async def update_topic_emoji(
         # change must have its write-through cache update rolled back,
         # else the next cycle would see name_changed=False and drop the
         # rename entirely (the token-match branch consults name_changed).
-        _pending_transitions[key] = (
-            state,
-            now - _DEBOUNCE_BY_STATE.get(state, DEBOUNCE_TO_IDLE_SECONDS),
-        )
+        if decorated:
+            _pending_transitions[key] = (
+                state,
+                now - _DEBOUNCE_BY_STATE.get(state, DEBOUNCE_TO_IDLE_SECONDS),
+            )
         if name_changed:
             if prev_name is None:
                 _topic_names.pop(key, None)

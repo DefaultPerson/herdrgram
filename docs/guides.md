@@ -86,9 +86,22 @@ provider prefix makes agent topics searchable; the pane suffix distinguishes
 siblings without flapping when siblings join or leave. Both remain display
 state rather than identity and can change when Herdr updates its live labels.
 
+Set `CCGRAM_HERDR_TOPIC_LABEL=tab` to name each topic after its Herdr tab and
+nothing else, so the topic list reads like the Herdr sidebar. The tab label is
+used verbatim, including the bare number Herdr gives a tab nobody has named, and
+the pane is appended (`3 ▸ p2`) only for the tabs that actually hold more than
+one agent. Rename the tab in Herdr and the topic follows on the next
+reconciliation, as with the full label. The trade-offs: the label no longer says
+which provider or workspace a topic belongs to, two tabs with the same name in
+different workspaces read the same, and the pane suffix appears and disappears
+as agents join or leave a tab (the full label always carries it, so it never
+moves). `full` remains the default.
+
 Telegram topic rename is disabled for shared tabs because Herdr's tab rename
 would rename every sibling. Rename the Herdr tab directly only when its tab has
-one agent; the next reconciliation updates the topic name. If Herdr reports the
+one agent; the next reconciliation updates the topic name. Set
+`CCGRAM_MUX_RENAME_FROM_TELEGRAM=false` to close that direction for every tab,
+shared or not (see [One-Way Name Sync](#one-way-name-sync)). If Herdr reports the
 same session target more than once, CCGram quarantines only that target and
 keeps unrelated topics operational.
 
@@ -227,6 +240,9 @@ All settings accept both CLI flags and environment variables. CLI flags take pre
 | `CCGRAM_HIDE_STATUS`                                 | `false`                        | Set `true` to suppress transient status bubbles; replies and controls remain available              |
 | `CCGRAM_ECHO_USER_MESSAGES`                          | `true`                         | Set `false` to drop the 👤 echo of text typed in the terminal (Telegram-sent text is unaffected)      |
 | `CCGRAM_HERDR_NOTIFY_ON_INJECT`                      | `false`                        | Set `true` to raise a silent desktop notification when a Telegram message lands in a pane (herdr)    |
+| `CCGRAM_TOPIC_NAME_DECORATIONS`                      | `true`                         | Set `false` for plain topic names: no status emoji, no RC/YOLO badge, no rename on a state change    |
+| `CCGRAM_MUX_RENAME_FROM_TELEGRAM`                    | `true`                         | Set `false` to stop a Telegram topic rename from renaming the multiplexer window (herdr: the tab)    |
+| `CCGRAM_HERDR_TOPIC_LABEL`                           | `full`                         | herdr topic label: `full` (provider/workspace/tab/pane) or `tab` (the herdr tab label alone)         |
 | `CCGRAM_VOICE_AUTOSEND`                              | `false`                        | Set `true` to send voice transcriptions without confirmation; transcription is still shown           |
 | `CCGRAM_PROMPT_MODE` / `--prompt-mode`               | `wrap`                         | Shell prompt marker: `wrap` (append `⌘N⌘`) or `replace` (legacy `{prefix}:N❯`)                       |
 | `CCGRAM_PROMPT_MARKER`                               | `ccgram`                       | Marker prefix used only by `replace` mode                                                            |
@@ -257,6 +273,22 @@ Topic emojis change color to reflect agent status. The mapping between color and
 | `user`             | agent is idle / ready for input | agent is working | "does anything need my attention?" |
 
 Set globally via `CCGRAM_STATUS_MODE=user` or `--status-mode user`. Invalid values fall back to `system`.
+
+## Plain Topic Names
+
+By default a topic title carries its state: a status emoji in front, plus 📡 while Remote Control is on and 🎲 in YOLO mode. That costs one `editForumTopic` call per state change, and Telegram posts a "topic renamed" service message for each one.
+
+Set `CCGRAM_TOPIC_NAME_DECORATIONS=false` and a topic title becomes exactly its display name. No emoji, no badges, and — because the title no longer encodes anything that a state change alters — no rename at all when the agent goes from working to idle to done. Status is still available everywhere else: the status bubble, `/sessions`, and the toolbar are unaffected.
+
+Names still flow *into* Telegram. When the display name itself changes, because a herdr tab or a tmux window was renamed, the topic is renamed to match on the next poll cycle. A topic inherited from a run with decorations on is repaired to its clean name the first time the bot sees it.
+
+## One-Way Name Sync
+
+By default, renaming a topic in Telegram renames the window behind it. On herdr that is a `tab rename`, which relabels the tab for *every* pane in it, so renaming one agent's topic can rename a sibling agent's tab.
+
+Set `CCGRAM_MUX_RENAME_FROM_TELEGRAM=false` and the rename stops at Telegram: the multiplexer is never told. The rename is dropped rather than recorded locally, because CCGram resyncs display names from the live listing every poll cycle — a locally stored name would be overwritten seconds later and the topic renamed back, which is worse than not acting. The title you typed stays in Telegram until the multiplexer label changes, at which point the multiplexer wins.
+
+This flag governs only the Telegram → multiplexer direction. Renaming a herdr tab still propagates to its topic.
 
 ## Status Bubble Visibility
 
@@ -414,7 +446,7 @@ herdr advertises its own capabilities through the seam; the behavioral consequen
 | Scrollback capture        | unbounded                       | clamped to **1000 lines**; longer output is flagged as truncated           |
 | Agent status              | inferred from terminal scraping | native (herdr reports agent status directly)                               |
 | Window IDs across restart | stable                          | guarded session target is revalidated from fresh `agent.list`; ccgram never re-resolves a tab/pane ID |
-| Topic labels              | window name                     | `<Provider> ▸ <workspace> ▸ <tab> ▸ <pane>` for every reported agent session |
+| Topic labels              | window name                     | `<Provider> ▸ <workspace> ▸ <tab> ▸ <pane>` for every reported agent session, or the bare tab label with `CCGRAM_HERDR_TOPIC_LABEL=tab` |
 
 <!-- markdownlint-enable MD060 -->
 
