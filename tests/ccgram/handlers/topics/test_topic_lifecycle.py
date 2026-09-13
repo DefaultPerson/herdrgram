@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from telegram import Bot
-from telegram.error import BadRequest, RetryAfter
+from telegram.error import BadRequest, RetryAfter, TelegramError
 
 from ccgram.multiplexer.base import WindowRef
 from ccgram.window_view import WindowView
@@ -83,6 +83,7 @@ class TestCheckAutocloseTimers:
             ),
         ):
             mock_config.autoclose_done_minutes = 1
+            mock_config.delete_topic_on_autoclose = False
             mock_router.resolve_chat_id.return_value = 42
             mock_router.get_window_for_thread.return_value = "@0"
             await check_autoclose_timers(bot)
@@ -116,6 +117,7 @@ class TestCheckAutocloseTimers:
         ):
             mock_config.autoclose_done_minutes = 30
             mock_config.autoclose_dead_minutes = 10
+            mock_config.delete_topic_on_autoclose = False
             mock_router.get_window_for_thread.return_value = "@0"
             mock_tmux.find_window_by_id = AsyncMock(return_value=MagicMock())
             mock_tmux.list_windows_for_reconciliation = AsyncMock(
@@ -209,6 +211,31 @@ class TestCheckUnboundWindowTtl:
         sweep.mux.kill_window.assert_called_once_with(window_id)
         sweep.revoke.assert_called_once_with(window_id)
 
+    async def test_kill_on_topic_close_does_not_reach_the_ttl_sweep(self):
+        """An /unbind-ed manual window keeps running whatever the flag says.
+
+        CCGRAM_KILL_ON_TOPIC_CLOSE is about a topic the user closed or deleted.
+        The TTL sweep stays gated on origin alone, which is what keeps /unbind
+        a non-destructive command.
+        """
+        from ccgram.handlers.topics import topic_lifecycle as tl
+
+        terminal_poll_state.get_state("@0").unbound_timer = time.monotonic() - 100
+        window = MagicMock(window_id="@0", window_name="test")
+        with (
+            patch.object(tl.config, "autoclose_done_minutes", 1),
+            patch.object(tl.config, "kill_on_topic_close", True),
+            patch.object(tl, "thread_router") as mock_router,
+            patch.object(tl, "window_query") as mock_wq,
+            patch.object(tl, "tmux_manager") as mock_tmux,
+        ):
+            mock_router.iter_thread_bindings.return_value = []
+            mock_wq.view_window.return_value = _window_view("manual_discovered", "@0")
+            mock_tmux.kill_window = AsyncMock(return_value=True)
+            await check_unbound_window_ttl([window])
+
+        mock_tmux.kill_window.assert_not_called()
+
     async def test_failed_kill_keeps_tokens_alive(self):
         """Tokens stay valid while the window might still be running."""
         sweep = await _sweep_expired_unbound_window(kill_ok=False)
@@ -266,6 +293,46 @@ class TestProbeTopicExistence:
         )
         if expect_kill:
             mock_tmux.kill_window.assert_called_once_with(window_id)
+        else:
+            mock_tmux.kill_window.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("kill_on_topic_close", "expect_kill"),
+        [(False, False), (True, True)],
+        ids=["flag_off_unbinds_only", "flag_on_kills_manual_window"],
+    )
+    async def test_deleted_topic_kills_a_manual_window_only_under_the_flag(
+        self, kill_on_topic_close: bool, expect_kill: bool
+    ):
+        from ccgram.handlers.topics import topic_lifecycle as tl
+
+        bot = AsyncMock(spec=Bot)
+        bot.unpin_all_forum_topic_messages = AsyncMock(
+            side_effect=BadRequest("Topic_id_invalid")
+        )
+        with (
+            patch.object(tl, "thread_router") as mock_router,
+            patch.object(tl, "tmux_manager") as mock_tmux,
+            patch.object(tl, "window_query") as mock_wq,
+            patch.object(tl, "clear_topic_state", new_callable=AsyncMock),
+            patch.object(tl.config, "kill_on_topic_close", kill_on_topic_close),
+        ):
+            mock_router.iter_thread_bindings.return_value = [(1, 100, HERDR_TARGET)]
+            mock_router.resolve_chat_id.return_value = 42
+            mock_tmux.find_window_by_id = AsyncMock(
+                return_value=MagicMock(window_id=HERDR_TARGET)
+            )
+            mock_wq.view_window.return_value = _window_view(
+                "manual_discovered", HERDR_TARGET
+            )
+            mock_tmux.kill_window = AsyncMock(return_value=True)
+            await probe_topic_existence(bot)
+
+        mock_router.unbind_thread.assert_called_once_with(
+            1, 100, chat_id=42, retirement_reason="remote_deleted"
+        )
+        if expect_kill:
+            mock_tmux.kill_window.assert_called_once_with(HERDR_TARGET)
         else:
             mock_tmux.kill_window.assert_not_called()
 
@@ -485,6 +552,90 @@ class TestProbeTopicExistence:
                 bot.unpin_all_forum_topic_messages.assert_not_called()
         finally:
             tl._probe_pin_disabled.discard(wid)
+
+
+class TestAutocloseDeleteFlag:
+    """CCGRAM_DELETE_TOPIC_ON_AUTOCLOSE swaps the close for a delete."""
+
+    @staticmethod
+    async def _autoclose_done_topic(client: AsyncMock) -> MagicMock:
+        from ccgram.handlers.topics import topic_lifecycle as tl
+
+        with (
+            patch.object(tl, "thread_router") as mock_router,
+            patch.object(tl, "clear_topic_state", new_callable=AsyncMock),
+        ):
+            mock_router.iter_thread_bindings_with_chat.return_value = []
+            mock_router.resolve_chat_id.return_value = 42
+            mock_router.get_window_for_thread.return_value = "@0"
+            await tl._close_expired_topic(client, 1, 100, "done")
+        return mock_router
+
+    async def test_flag_off_closes_the_topic(self) -> None:
+        from ccgram.handlers.topics import topic_lifecycle as tl
+
+        client = AsyncMock()
+        with patch.object(tl.config, "delete_topic_on_autoclose", False):
+            await self._autoclose_done_topic(client)
+
+        client.close_forum_topic.assert_awaited_once_with(
+            chat_id=42, message_thread_id=100
+        )
+        client.delete_forum_topic.assert_not_called()
+
+    async def test_flag_on_deletes_the_topic(self) -> None:
+        from ccgram.handlers.topics import topic_lifecycle as tl
+
+        client = AsyncMock()
+        with patch.object(tl.config, "delete_topic_on_autoclose", True):
+            router = await self._autoclose_done_topic(client)
+
+        client.delete_forum_topic.assert_awaited_once_with(
+            chat_id=42, message_thread_id=100
+        )
+        client.close_forum_topic.assert_not_called()
+        router.unbind_thread.assert_called_once_with(
+            1, 100, retirement_reason="remote_closed"
+        )
+
+    async def test_refused_delete_falls_back_to_close(self) -> None:
+        """No Manage Topics rights: retire the topic the way we still can."""
+        from ccgram.handlers.topics import topic_lifecycle as tl
+
+        client = AsyncMock()
+        client.delete_forum_topic.side_effect = BadRequest("not enough rights")
+        with patch.object(tl.config, "delete_topic_on_autoclose", True):
+            router = await self._autoclose_done_topic(client)
+
+        client.close_forum_topic.assert_awaited_once_with(
+            chat_id=42, message_thread_id=100
+        )
+        router.unbind_thread.assert_called_once()
+
+    async def test_gone_topic_is_not_closed_again(self) -> None:
+        """A delete that reports the topic gone is already the end state."""
+        from ccgram.handlers.topics import topic_lifecycle as tl
+
+        client = AsyncMock()
+        client.delete_forum_topic.side_effect = BadRequest("Topic_id_invalid")
+        with patch.object(tl.config, "delete_topic_on_autoclose", True):
+            router = await self._autoclose_done_topic(client)
+
+        client.close_forum_topic.assert_not_called()
+        router.unbind_thread.assert_called_once()
+
+    async def test_failed_delete_and_close_keeps_the_timer(self) -> None:
+        from ccgram.handlers.topics import topic_lifecycle as tl
+
+        client = AsyncMock()
+        client.delete_forum_topic.side_effect = TelegramError("delete boom")
+        client.close_forum_topic.side_effect = TelegramError("close boom")
+        lifecycle_strategy.start_autoclose_timer(1, 100, "done", time.monotonic())
+        with patch.object(tl.config, "delete_topic_on_autoclose", True):
+            router = await self._autoclose_done_topic(client)
+
+        router.unbind_thread.assert_not_called()
+        assert lifecycle_strategy.get_state(1, 100).autoclose is not None
 
 
 class TestAutocloseNeedsConfirmedDeath:

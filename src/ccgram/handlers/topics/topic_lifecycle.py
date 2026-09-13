@@ -131,7 +131,7 @@ async def _close_expired_topic(
     chat_id = scoped_chat_id or thread_router.resolve_chat_id(user_id, thread_id)
     removed = False
     try:
-        await client.close_forum_topic(chat_id=chat_id, message_thread_id=thread_id)
+        await _retire_expired_topic(client, chat_id, thread_id)
         removed = True
     except TelegramError as e:
         if is_thread_gone(e):
@@ -152,6 +152,36 @@ async def _close_expired_topic(
             thread_id,
             retirement_reason="remote_closed",
         )
+
+
+async def _retire_expired_topic(
+    client: TelegramClient, chat_id: int, thread_id: int
+) -> None:
+    """Delete the expired topic when configured to, otherwise close it.
+
+    Upstream closes: closing hides the topic but keeps its history, while a
+    delete is irreversible.  ``CCGRAM_DELETE_TOPIC_ON_AUTOCLOSE`` opts into the
+    symmetric behaviour where an expired topic disappears; a delete Telegram
+    refuses (no ``can_manage_topics``, topic not deletable) falls back to the
+    close so the topic is still retired.  A topic that is already gone is
+    re-raised untouched — the caller reads that as removed.
+    """
+    if config.delete_topic_on_autoclose:
+        try:
+            await client.delete_forum_topic(
+                chat_id=chat_id, message_thread_id=thread_id
+            )
+            return
+        except TelegramError as e:
+            if is_thread_gone(e):
+                raise
+            logger.info(
+                "autoclose_delete_failed_closing_instead",
+                chat_id=chat_id,
+                thread_id=thread_id,
+                error=str(e),
+            )
+    await client.close_forum_topic(chat_id=chat_id, message_thread_id=thread_id)
 
 
 # ── Unbound window TTL ────────────────────────────────────────────────────
@@ -336,8 +366,14 @@ async def _unbind_deleted_topic(
     """Tear down a window whose Telegram topic no longer exists."""
     w = await tmux_manager.find_window_by_id(wid)
     view = window_query.view_window(wid)
+    # A manually-discovered window is never auto-killed by default; deleting
+    # its topic only unbinds it.  CCGRAM_KILL_ON_TOPIC_CLOSE makes the
+    # lifecycle symmetric: the topic is the session, so deleting it ends the
+    # session whoever started it.  The unbound-TTL sweep is deliberately left
+    # alone — an unbound window must stay alive so /unbind remains safe.
+    ccgram_created = view is not None and view.origin == CCGRAM_CREATED_WINDOW_ORIGIN
     killed = False
-    if w and view and view.origin == CCGRAM_CREATED_WINDOW_ORIGIN:
+    if w and (ccgram_created or config.kill_on_topic_close):
         await tmux_manager.kill_window(w.window_id)
         killed = True
     terminal_poll_state.reset_probe_failures(wid)
@@ -423,6 +459,55 @@ async def probe_topic_existence(client: TelegramClient) -> None:
 # Telegram topic event handlers.
 
 
+async def _kill_window_on_topic_close(
+    window_id: str, user_id: int, thread_id: int
+) -> bool:
+    """Kill a closed topic's window when CCGRAM_KILL_ON_TOPIC_CLOSE is set.
+
+    Off by default, which is upstream's asymmetric lifecycle: the window
+    survives its topic and can be rebound from the window picker.  With the
+    flag on, closing the topic ends the session regardless of who started it.
+
+    Presence is read tri-state first: ``find_window_by_id`` answers None both
+    for a window that is gone and for a backend that could not be reached, and
+    a kill must not be attempted on that ambiguity.  A refused kill is logged
+    and reported as not killed — the caller still unbinds, so the close is
+    never retried in a loop.
+    """
+    if not config.kill_on_topic_close:
+        return False
+
+    # Lazy: importing the reconciliation seam at module load forms a cycle.
+    from ...multiplexer.reconciliation import window_presence
+
+    present = await window_presence(window_id, tmux_manager)
+    if present is not True:
+        logger.info(
+            "topic_close_kill_skipped",
+            window_id=window_id,
+            user_id=user_id,
+            thread_id=thread_id,
+            presence="absent" if present is False else "unknown",
+        )
+        return False
+
+    if not await tmux_manager.kill_window(window_id):
+        logger.warning(
+            "topic_close_kill_failed",
+            window_id=window_id,
+            user_id=user_id,
+            thread_id=thread_id,
+        )
+        return False
+    logger.info(
+        "topic_close_killed_window",
+        window_id=window_id,
+        user_id=user_id,
+        thread_id=thread_id,
+    )
+    return True
+
+
 async def topic_closed_handler(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -431,6 +516,9 @@ async def topic_closed_handler(
     The window becomes "unbound" and is available for rebinding via the window
     picker when a new topic is created. Unbound windows are auto-killed after
     the configured TTL (autoclose_done_minutes) by the status polling loop.
+
+    With ``CCGRAM_KILL_ON_TOPIC_CLOSE`` set, the window is killed first instead
+    and the thread is unbound either way.
     """
     user = update.effective_user
     if not user or not config.is_user_allowed(user.id):
@@ -452,7 +540,8 @@ async def topic_closed_handler(
     )
     if window_id:
         display = thread_router.get_display_name(window_id)
-        cleanup_kwargs = {"window_id": window_id, "window_dead": False}
+        killed = await _kill_window_on_topic_close(window_id, user.id, thread_id)
+        cleanup_kwargs = {"window_id": window_id, "window_dead": killed}
         if chat_id is not None:
             cleanup_kwargs["chat_id"] = chat_id
         await clear_topic_state(
@@ -476,8 +565,9 @@ async def topic_closed_handler(
                 retirement_reason="remote_closed",
             )
         logger.info(
-            "Topic closed: window %s unbound (kept alive for rebinding, user=%d, thread=%d)",
+            "Topic closed: window %s %s (user=%d, thread=%d)",
             display,
+            "killed and unbound" if killed else "unbound (kept alive for rebinding)",
             user.id,
             thread_id,
         )

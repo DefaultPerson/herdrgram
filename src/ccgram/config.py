@@ -245,6 +245,15 @@ class Config:
         self.pane_lifecycle_notify: bool = os.getenv(
             "CCGRAM_PANE_LIFECYCLE_NOTIFY", ""
         ).lower() in ("1", "true", "yes")
+        # Symmetric topic lifecycle, both off by default (upstream behaviour):
+        # closing a topic keeps its window alive for rebinding, and autoclose
+        # closes the topic instead of deleting it (deletion is irreversible).
+        self.kill_on_topic_close: bool = os.getenv(
+            "CCGRAM_KILL_ON_TOPIC_CLOSE", ""
+        ).lower() in ("1", "true", "yes")
+        self.delete_topic_on_autoclose: bool = os.getenv(
+            "CCGRAM_DELETE_TOPIC_ON_AUTOCLOSE", ""
+        ).lower() in ("1", "true", "yes")
         self._init_miniapp()
 
     def _init_miniapp(self) -> None:

@@ -207,6 +207,8 @@ All settings accept both CLI flags and environment variables. CLI flags take pre
 | `MONITOR_POLL_INTERVAL` / `--monitor-interval`       | `2.0`                          | Seconds between transcript polls                                                                     |
 | `AUTOCLOSE_DONE_MINUTES` / `--autoclose-done`        | `30`                           | Auto-close done topics after N minutes (0=off)                                                       |
 | `AUTOCLOSE_DEAD_MINUTES` / `--autoclose-dead`        | `10`                           | Auto-close dead sessions after N minutes (0=off)                                                     |
+| `CCGRAM_KILL_ON_TOPIC_CLOSE`                         | `false`                        | Set `true` to kill the window when its topic is closed or deleted                                    |
+| `CCGRAM_DELETE_TOPIC_ON_AUTOCLOSE`                   | `false`                        | Set `true` to delete instead of close an auto-closed topic (irreversible)                            |
 | `CCGRAM_WHISPER_PROVIDER` / `--whisper-provider`     | _(empty)_                      | Whisper provider: `openai`, `groq`, or empty to disable                                              |
 | `CCGRAM_WHISPER_API_KEY`                             | _(empty)_                      | API key (env only); falls back to OPENAI_API_KEY/GROQ_API_KEY                                        |
 | `CCGRAM_WHISPER_BASE_URL` / `--whisper-base-url`     | _(provider default)_           | Custom OpenAI-compatible endpoint URL                                                                |
@@ -436,6 +438,21 @@ Set to `0` to disable:
 ```bash
 ccgram --autoclose-done 0 --autoclose-dead 0
 ```
+
+### Symmetric Topic Lifecycle (opt-in)
+
+By default the lifecycle is asymmetric: an auto-closed topic keeps its history, and a window CCGram did not create is never killed — closing or deleting its topic only unbinds it, leaving the session running for a later rebind. Two environment flags make it symmetric, so a topic and its session end together:
+
+```ini
+# Closing or deleting a topic kills its window (any origin, not just ccgram-created).
+CCGRAM_KILL_ON_TOPIC_CLOSE=true
+# Auto-close deletes the topic instead of closing it.
+CCGRAM_DELETE_TOPIC_ON_AUTOCLOSE=true
+```
+
+`CCGRAM_KILL_ON_TOPIC_CLOSE` checks that the window is really there before killing it — a backend that cannot answer is left alone — and unbinds the thread even when the kill fails. It does not change the unbound-window TTL: a window unbound with `/unbind` keeps running until its own TTL expires, and only a window CCGram created is killed there.
+
+`CCGRAM_DELETE_TOPIC_ON_AUTOCLOSE` deletes irreversibly and removes the topic history; if Telegram refuses the delete (for example the bot lacks **Manage Topics**), CCGram falls back to closing the topic. On herdr, killing a window closes only that agent's pane — sibling panes in the same tab keep running.
 
 ## Multi-Instance Setup
 

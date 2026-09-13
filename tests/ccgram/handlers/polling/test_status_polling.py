@@ -114,6 +114,7 @@ class TestAutocloseTimers:
         ):
             mock_config.autoclose_done_minutes = 30
             mock_config.autoclose_dead_minutes = minutes
+            mock_config.delete_topic_on_autoclose = False
             mock_time.monotonic.return_value = elapsed
             mock_tr.resolve_chat_id.return_value = -100
             await check_autoclose_timers(bot)
@@ -135,6 +136,7 @@ class TestAutocloseTimers:
         ):
             mock_config.autoclose_done_minutes = 30
             mock_config.autoclose_dead_minutes = 10
+            mock_config.delete_topic_on_autoclose = False
             mock_time.monotonic.return_value = 29 * 60
             await check_autoclose_timers(bot)
         bot.close_forum_topic.assert_not_called()
@@ -165,6 +167,7 @@ class TestAutocloseTimers:
         ):
             mock_config.autoclose_done_minutes = 30
             mock_config.autoclose_dead_minutes = 10
+            mock_config.delete_topic_on_autoclose = False
             mock_time.monotonic.return_value = 30 * 60 + 1
             mock_tr.resolve_chat_id.return_value = -100
             await check_autoclose_timers(bot)
@@ -187,6 +190,7 @@ class TestAutocloseTimers:
         ):
             mock_config.autoclose_done_minutes = 30
             mock_config.autoclose_dead_minutes = 10
+            mock_config.delete_topic_on_autoclose = False
             mock_time.monotonic.return_value = 30 * 60 + 1
             mock_tr.resolve_chat_id.return_value = -100
             mock_tr.get_window_for_thread.return_value = "@0"
