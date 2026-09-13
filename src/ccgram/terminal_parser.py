@@ -10,8 +10,8 @@ All Claude Code text patterns live here. To support a new UI type or
 a changed Claude Code version, edit UI_PATTERNS / STATUS_SPINNERS.
 
 Key functions: extract_interactive_content(), parse_status_line(),
-is_completed_turn_line(), strip_pane_chrome(), extract_bash_output(),
-detect_remote_control().
+is_completed_turn_line(), is_status_row_notice(), strip_pane_chrome(),
+extract_bash_output(), detect_remote_control().
 """
 
 import re
@@ -405,10 +405,12 @@ _NON_SPINNER_RANGES = ((0x2500, 0x257F),)  # box-drawing characters
 _NON_SPINNER_CHARS = frozenset("─│┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬>|+<=~")
 
 # Unicode categories that spinner characters typically belong to.
-# So = Symbol Other (✻, ✽, ✶, ✳, ✢, ☐, ✔, ☒)
+# So = Symbol Other (✻, ✽, ✶, ✳, ✢, ☐, ☒)
 # Sm = Symbol Math (∘, ⊛)
 # Note: Po (Punctuation Other) is excluded — it includes common ASCII chars
 # like !, #, %, @, *, / that would cause false positives.
+# Note: the check-mark family is excluded by name (_COMPLETION_GLYPHS) — it is
+# Symbol Other too, but it heads a *finished* row, never a spinning one.
 _SPINNER_CATEGORIES = frozenset({"So", "Sm"})
 _MAX_STATUS_PROGRESS_LINES = 8
 _STATUS_PROGRESS_RE = re.compile(r"^\s*(?:⎿\s*)?[✔◼◻◔]\s+\S")
@@ -420,6 +422,14 @@ _STATUS_PROGRESS_RE = re.compile(r"^\s*(?:⎿\s*)?[✔◼◻◔]\s+\S")
 _COMPLETED_TURN_RE = re.compile(r"·\s*done\b")
 # A live status line always says how to stop it; a finished one never does.
 _INTERRUPT_HINT = "esc to interrupt"
+# Claude also parks one-off notices on the status row, fronted by a check mark
+# instead of a spinner: "✔ Update installed · Restart to update".  The check
+# mark is Symbol Other, so the generic spinner heuristic would accept it and
+# the notice would read as work in progress for as long as it stays on screen.
+_COMPLETION_GLYPHS = frozenset("✔✓✅☑")
+_CHROME_NOTICE_RE = re.compile(
+    r"\bUpdate installed\b|\bRestart to update\b", re.IGNORECASE
+)
 
 
 def is_likely_spinner(char: str) -> bool:
@@ -428,13 +438,14 @@ def is_likely_spinner(char: str) -> bool:
     Uses a two-tier approach:
     1. Fast-path: check the known STATUS_SPINNERS frozenset
     2. Fallback: use Unicode category matching (So, Sm, Braille)
-       while excluding box-drawing and other non-spinner characters
+       while excluding box-drawing, the check-mark family, and other
+       non-spinner characters
     """
     if not char:
         return False
     if char in STATUS_SPINNERS:
         return True
-    if char in _NON_SPINNER_CHARS:
+    if char in _COMPLETION_GLYPHS or char in _NON_SPINNER_CHARS:
         return False
     cp = ord(char)
     for start, end in _NON_SPINNER_RANGES:
@@ -464,6 +475,27 @@ def is_completed_turn_line(line: str) -> bool:
     return _COMPLETED_TURN_RE.search(line) is not None
 
 
+def is_status_row_notice(line: str) -> bool:
+    """True when a line on Claude's status row is a notice, not work.
+
+    ``✔ Update installed · Restart to update`` sits exactly where the status
+    line sits, right above the chrome separator, and stays there until the
+    next restart.  Its check mark is Symbol Other, so the generic spinner
+    heuristic used to accept it and the window read as busy for as long as
+    the notice was on screen — the same permanent "typing…" a finished-turn
+    line causes, from a different glyph.
+
+    Matches on the check-mark family whatever the wording, and on the known
+    notice wording behind any spinner-looking glyph, so a reworded banner or
+    a changed glyph still has one of the two to catch it.
+    """
+    if not line:
+        return False
+    if line[0] in _COMPLETION_GLYPHS:
+        return True
+    return is_likely_spinner(line[0]) and bool(_CHROME_NOTICE_RE.search(line))
+
+
 def parse_status_line(pane_text: str, *, pane_rows: int | None = None) -> str | None:
     """Extract the Claude Code status line from terminal output.
 
@@ -474,9 +506,10 @@ def parse_status_line(pane_text: str, *, pane_rows: int | None = None) -> str | 
     When ``pane_rows`` is provided, the separator scan is limited to the
     bottom 40% of the screen as an optimization.
 
-    A spinner line that reports a finished turn (``is_completed_turn_line``)
-    is not a status line: Claude keeps the spinner glyph after the turn ends,
-    and reading it as live work pins the window to "busy" forever.
+    A line that reports a finished turn (``is_completed_turn_line``) or a
+    one-off notice (``is_status_row_notice``) is not a status line: both sit
+    in the status row behind a glyph the spinner heuristic accepts, and
+    reading either as live work pins the window to "busy" forever.
 
     Returns the text after the spinner, or None if no status line found.
     """
@@ -563,13 +596,14 @@ def _find_status_line_index(lines: list[str], scan_start: int) -> int | None:
             candidate = lines[j].strip()
             if not candidate:
                 continue
+            if is_completed_turn_line(candidate) or is_status_row_notice(candidate):
+                # The status row holds a finished turn or a notice, not live
+                # work.  Stop the scan instead of walking further up: the next
+                # separator above sits in scrollback, where an older spinner
+                # line would resurrect exactly the "busy forever" both of
+                # these guard against.
+                return None
             if is_likely_spinner(candidate[0]):
-                if is_completed_turn_line(candidate):
-                    # A finished turn, not a live status.  Stop the scan
-                    # instead of walking further up: the next separator above
-                    # sits in scrollback, where an older spinner line would
-                    # resurrect exactly the "busy forever" this guards against.
-                    return None
                 return j
             break
     return None

@@ -240,6 +240,30 @@ def sample_pane_completed_turn():
 
 
 @pytest.fixture
+def sample_pane_update_banner():
+    """The same idle pane once Claude parks its update notice on the status row.
+
+    Captured live from herdr pane wC:p3 while its native agent status read
+    ``idle``. The notice is right-aligned and fronted by U+2714 HEAVY CHECK
+    MARK, which is Symbol Other, so the generic spinner heuristic used to read
+    the banner as work in progress for as long as it stayed on screen.
+    """
+    sep = "─" * 90
+    return (
+        "✻ Sautéed for 2m 26s · done 11:06 AM · 1 shell still running\n"
+        "\n"
+        "※ recap: Чинили тихую потерю сигналов в orbs-трекере.\n"
+        "  Логов стоит на 15:47 UTC.\n"
+        "                              ✔ Update installed · Restart to update\n"
+        f"{sep}\n"
+        "❯\n"
+        f"{sep}\n"
+        "  ▌ dca-services › main › Opus 5 › high\n"
+        "  ⏵⏵ bypass permissions on · 1 shell · ← for agents\n"
+    )
+
+
+@pytest.fixture
 def sample_pane_working_turn():
     """The same screen mid-turn: the spinner line shown while Claude works."""
     sep = "─" * 90

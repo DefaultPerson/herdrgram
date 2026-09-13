@@ -12,6 +12,7 @@ from ccgram.terminal_parser import (
     format_status_display,
     is_completed_turn_line,
     is_likely_spinner,
+    is_status_row_notice,
     parse_status_block,
     parse_status_line,
     status_emoji_prefix,
@@ -57,6 +58,16 @@ class TestIsLikelySpinner:
         ids=["upper_a", "lower_z", "digit", "space", "empty"],
     )
     def test_non_spinners_common(self, char: str):
+        assert is_likely_spinner(char) is False
+
+    @pytest.mark.parametrize(
+        "char",
+        ["✔", "✓", "✅", "☑"],
+        ids=["heavy_check", "check", "emoji_check", "ballot_check"],
+    )
+    def test_check_marks_rejected(self, char: str):
+        # Symbol Other like the real spinners, but it heads a finished row
+        # ("✔ Update installed · Restart to update"), never a spinning one.
         assert is_likely_spinner(char) is False
 
     def test_math_symbol_detected(self):
@@ -202,6 +213,49 @@ class TestParseStatusLine:
         self, sample_pane_completed_turn: str
     ):
         assert parse_status_block(sample_pane_completed_turn, pane_rows=50) is None
+
+    def test_update_banner_is_not_a_status(self, sample_pane_update_banner: str):
+        # The banner sits exactly where the status line sits and stays until
+        # the next restart, so reading it as work pins the window to busy.
+        assert parse_status_line(sample_pane_update_banner, pane_rows=50) is None
+        assert parse_status_block(sample_pane_update_banner, pane_rows=50) is None
+
+    def test_update_banner_does_not_fall_back_to_scrollback(self):
+        pane = (
+            "✻ Simmering… (14s · esc to interrupt)\n"
+            f"{_SEPARATOR}\n"
+            "some later output\n"
+            "✔ Update installed · Restart to update\n"
+            f"{_SEPARATOR}\n"
+            "❯ \n"
+        )
+        assert parse_status_line(pane) is None
+
+
+class TestIsStatusRowNotice:
+    @pytest.mark.parametrize(
+        "line",
+        [
+            pytest.param("✔ Update installed · Restart to update", id="live_banner"),
+            pytest.param("✓ Update installed", id="light_check"),
+            pytest.param("☑ Restart to update", id="ballot_check"),
+            pytest.param("✔ Anything at all", id="check_mark_alone"),
+        ],
+    )
+    def test_notices(self, line: str):
+        assert is_status_row_notice(line) is True
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            pytest.param("✻ Sautéed… (esc to interrupt)", id="spinner"),
+            pytest.param("· Thinking… (5s)", id="thinking"),
+            pytest.param("Update installed · Restart to update", id="no_glyph"),
+            pytest.param("", id="empty"),
+        ],
+    )
+    def test_not_notices(self, line: str):
+        assert is_status_row_notice(line) is False
 
 
 class TestIsCompletedTurnLine:
@@ -1026,6 +1080,14 @@ class TestParseStatusFromScreen:
 
         screen = self._make_screen(
             sample_pane_completed_turn.replace("\n", "\r\n"), columns=100, rows=24
+        )
+        assert parse_status_from_screen(screen) is None
+
+    def test_update_banner_via_screen(self, sample_pane_update_banner: str):
+        from ccgram.terminal_parser import parse_status_from_screen
+
+        screen = self._make_screen(
+            sample_pane_update_banner.replace("\n", "\r\n"), columns=100, rows=24
         )
         assert parse_status_from_screen(screen) is None
 
