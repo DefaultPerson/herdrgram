@@ -245,6 +245,7 @@ All settings accept both CLI flags and environment variables. CLI flags take pre
 | `CCGRAM_TOPIC_ON_DEMAND`                             | `false`                        | Set `true` to offer a topic in General for each new session instead of creating one outright        |
 | `CCGRAM_TOPIC_BACKFILL_MESSAGES`                     | `0`                            | Messages replayed into any newly bound topic; `0` (upstream) replays none                            |
 | `CCGRAM_HERDR_REQUIRE_NATIVE_SESSION`                | `false`                        | Set `true` to wait for herdr to name an agent's session before adopting or offering it               |
+| `CCGRAM_HERDR_NATIVE_STATUS_AUTHORITY`               | `false`                        | Set `true` to let a backend's native agent status outrank terminal scraping when resolving status    |
 | `CCGRAM_MUX_RENAME_FROM_TELEGRAM`                    | `true`                         | Set `false` to stop a Telegram topic rename from renaming the multiplexer window (herdr: the tab)    |
 | `CCGRAM_HERDR_TOPIC_LABEL`                           | `full`                         | herdr topic label: `full` (provider/workspace/tab/pane) or `tab` (the herdr tab label alone)         |
 | `CCGRAM_VOICE_AUTOSEND`                              | `false`                        | Set `true` to send voice transcriptions without confirmation; transcription is still shown           |
@@ -512,6 +513,8 @@ Creating sessions from the terminal on herdr is covered in [Creating Sessions fr
 > **Workspace picker:** On herdr, `/new` shows an extra step after directory selection. Choose a workspace to pin the new tab there, or skip it: ccgram then explicitly creates a workspace from the requested directory and uses only its returned ID. It never infers the active or a matching workspace.
 >
 > **Self-hosting escape hatch:** Workspaces or tabs whose label matches `__*__` (e.g. `__main__`) are invisible to ccgram. Use this naming convention to run ccgram itself inside herdr without it auto-adopting its own terminal as a topic.
+
+Set `CCGRAM_HERDR_NATIVE_STATUS_AUTHORITY=true` to make the "Agent status" row above literal. By default CCGram reads the terminal first and asks the backend only when the screen told it nothing, so anything that *looks* like a spinner outranks the backend that actually knows: Claude Code keeps its spinner glyph on the line that reports a finished turn (`✻ Sautéed for 2m 26s · done 11:06 AM`), and a session that stopped long ago can still show "typing…". With the flag on, herdr's `idle` and `done` end the turn whatever the screen shows; `working` and `blocked` still take their label — and their prompt keyboard — from the screen, falling back to the backend's own label; `unknown` or no answer falls back to the default order. tmux, which has no native status, is unaffected either way.
 
 ## Sync and Retired Topic Cleanup
 

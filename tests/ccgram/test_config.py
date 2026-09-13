@@ -348,6 +348,24 @@ class TestHerdrRequireNativeSession:
 
 
 @pytest.mark.usefixtures("_base_env")
+class TestHerdrNativeStatusAuthority:
+    def test_default_false(self, monkeypatch):
+        """Upstream scrapes the terminal first and gap-fills from the backend."""
+        monkeypatch.delenv("CCGRAM_HERDR_NATIVE_STATUS_AUTHORITY", raising=False)
+        assert Config().herdr_native_status_authority is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "True", "YES"])
+    def test_enabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_HERDR_NATIVE_STATUS_AUTHORITY", value)
+        assert Config().herdr_native_status_authority is True
+
+    @pytest.mark.parametrize("value", ["", "0", "false", "no"])
+    def test_disabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_HERDR_NATIVE_STATUS_AUTHORITY", value)
+        assert Config().herdr_native_status_authority is False
+
+
+@pytest.mark.usefixtures("_base_env")
 class TestStatusMode:
     def test_default_is_system(self, monkeypatch):
         monkeypatch.delenv("CCGRAM_STATUS_MODE", raising=False)

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from .... import window_query
+from ....config import config
 from ....providers import get_provider_for_window
 from ....providers.base import StatusUpdate
 from ....session_monitor import get_active_monitor
@@ -27,7 +28,7 @@ from .decide import build_status_line
 
 if TYPE_CHECKING:
     from ....providers.base import AgentProvider
-    from ....multiplexer.base import WindowRef as TmuxWindow
+    from ....multiplexer.base import AgentStatus, WindowRef as TmuxWindow
     from ..polling_runtime import PollingRuntime
 
 logger = structlog.get_logger()
@@ -75,12 +76,19 @@ def _get_last_activity_ts(window_id: str) -> float | None:
     return mon.get_last_activity(session_id) if mon else None
 
 
-async def _resolve_status(
+async def _scrape_status(
     window_id: str,
     pane_text: str,
     w: "TmuxWindow",
     runtime: "PollingRuntime | None" = None,
 ) -> StatusUpdate | None:
+    """Terminal-scraping pass: pyte chrome first, then the provider's parser.
+
+    Runs on every tick whoever gets the final say on the status: feeding the
+    screen buffer is what keeps ``last_rendered_text`` (passive shell relay,
+    vim-insert detection) and remote-control detection current, so skipping it
+    would cost far more than one status line.
+    """
     sb = runtime.screen_buffer if runtime is not None else terminal_screen_buffer
     provider = _get_provider(window_id)
     status = _parse_with_pyte(
@@ -97,21 +105,77 @@ async def _resolve_status(
     pane_title = ""
     if provider.capabilities.uses_pane_title:
         pane_title = await tmux_manager.get_pane_title(w.window_id)
-    status = provider.parse_terminal_status(clean_text, pane_title=pane_title)
+    return provider.parse_terminal_status(clean_text, pane_title=pane_title)
+
+
+async def _resolve_status(
+    window_id: str,
+    pane_text: str,
+    w: "TmuxWindow",
+    runtime: "PollingRuntime | None" = None,
+) -> StatusUpdate | None:
+    """Resolve one window's status from the terminal and/or the backend.
+
+    Upstream order (the default): scrape the terminal, and ask a
+    ``native_agent_status`` backend only to gap-fill what the scrapers could
+    not read. ``CCGRAM_HERDR_NATIVE_STATUS_AUTHORITY=true`` inverts it — see
+    ``_resolve_with_native_authority``.
+    """
+    native: "AgentStatus | None" = None
+    if config.herdr_native_status_authority:
+        native = await _read_native_status(window_id)
+        if native is not None and native.state != "unknown":
+            return await _resolve_with_native_authority(
+                native, window_id, pane_text, w, runtime=runtime
+            )
+    status = await _scrape_status(window_id, pane_text, w, runtime=runtime)
     if status is not None:
         return status
     # Gap-fill: backends with native agent status (herdr) report a busy state
     # for non-Claude agents whose terminal chrome the scrapers can't read.
+    if config.herdr_native_status_authority:
+        # Already read above (``unknown`` or no answer) — don't ask twice.
+        return _busy_status_from_native(native)
     return await _native_agent_status(window_id)
 
 
-async def _native_agent_status(window_id: str) -> StatusUpdate | None:
-    """Synthesize a busy StatusUpdate from the backend's native agent status.
+async def _resolve_with_native_authority(
+    native: "AgentStatus",
+    window_id: str,
+    pane_text: str,
+    w: "TmuxWindow",
+    runtime: "PollingRuntime | None" = None,
+) -> StatusUpdate | None:
+    """Let the backend's own agent status decide; scrapers supply the label.
 
-    Only on ``native_agent_status`` backends (herdr). Surfaces ``working`` and
-    ``blocked`` (agent waiting for input) when terminal scraping yielded
-    nothing; ``idle`` / ``done`` / ``unknown`` return None so the existing
-    activity-based idle/done logic stays in control.
+    The scrapers read whatever glyphs the agent left on screen, and Claude
+    leaves a spinner glyph on its finished-turn line — so a scraper-first
+    order lets a stale screen outvote the backend that actually knows the
+    agent is idle, and the topic types forever. With the flag on:
+
+    * ``idle`` / ``done`` — no status at all, so the ordinary idle/done
+      transition runs. An interactive prompt is the one exception: it carries
+      no "working" meaning (``build_status_line`` returns None for it), and
+      dropping it would lose the AskUserQuestion / permission keyboards if the
+      backend ever reports a prompt-blocked pane as idle.
+    * ``blocked`` — the scraped prompt or label when there is one, otherwise
+      the plain "waiting for input" bubble.
+    * ``working`` — the scraped spinner text when there is one (it is the
+      better label), otherwise the backend's own.
+    """
+    scraped = await _scrape_status(window_id, pane_text, w, runtime=runtime)
+    if native.state in ("idle", "done"):
+        return scraped if scraped is not None and scraped.is_interactive else None
+    if scraped is not None:
+        return scraped
+    return _busy_status_from_native(native)
+
+
+async def _read_native_status(window_id: str) -> "AgentStatus | None":
+    """Read the backend's native agent status, push cache first.
+
+    None on backends without ``capabilities.native_agent_status`` (tmux) and
+    when the backend has no answer for this window.
     """
     if not tmux_manager.capabilities.native_agent_status:
         return None
@@ -122,6 +186,11 @@ async def _native_agent_status(window_id: str) -> StatusUpdate | None:
     native = agent_status_cache.get_status(window_id)
     if native is None:
         native = await tmux_manager.agent_status(window_id)
+    return native
+
+
+def _busy_status_from_native(native: "AgentStatus | None") -> StatusUpdate | None:
+    """``working`` / ``blocked`` → a busy StatusUpdate; anything else → None."""
     if native is None:
         return None
     if native.state == "working":
@@ -130,6 +199,17 @@ async def _native_agent_status(window_id: str) -> StatusUpdate | None:
     if native.state == "blocked":
         return StatusUpdate(raw_text="waiting for input", display_label="waiting")
     return None
+
+
+async def _native_agent_status(window_id: str) -> StatusUpdate | None:
+    """Synthesize a busy StatusUpdate from the backend's native agent status.
+
+    Only on ``native_agent_status`` backends (herdr). Surfaces ``working`` and
+    ``blocked`` (agent waiting for input) when terminal scraping yielded
+    nothing; ``idle`` / ``done`` / ``unknown`` return None so the existing
+    activity-based idle/done logic stays in control.
+    """
+    return _busy_status_from_native(await _read_native_status(window_id))
 
 
 def build_context(
@@ -170,7 +250,10 @@ __all__ = [
     "_check_vim_insert",
     "_get_last_activity_ts",
     "_get_provider",
+    "_native_agent_status",
     "_parse_with_pyte",
+    "_read_native_status",
     "_resolve_status",
+    "_scrape_status",
     "build_context",
 ]

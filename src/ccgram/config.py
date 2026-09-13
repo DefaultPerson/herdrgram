@@ -195,6 +195,17 @@ class Config:
         """Select the terminal-multiplexer backend."""
         # tmux default; herdr and agterm opt-in.
         self.multiplexer_name: str = os.getenv("CCGRAM_MULTIPLEXER", "tmux")
+        # Upstream resolves a window's status by scraping the terminal first
+        # and only asks a ``native_agent_status`` backend (herdr, agterm) when
+        # the scrapers came back empty, so any spinner-looking leftover on
+        # screen outvotes the backend that actually knows.
+        # CCGRAM_HERDR_NATIVE_STATUS_AUTHORITY=true inverts that on those
+        # backends: the native state decides, and the scrapers only supply the
+        # label (or the interactive prompt) for the state it reports. On tmux,
+        # which has no native status, the flag changes nothing.
+        self.herdr_native_status_authority: bool = os.getenv(
+            "CCGRAM_HERDR_NATIVE_STATUS_AUTHORITY", ""
+        ).lower() in ("1", "true", "yes")
 
     def _init_live_view(self) -> None:
         self.live_view_interval: int = max(
