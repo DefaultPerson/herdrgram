@@ -212,6 +212,7 @@ class TestLocalProvider:
 
         transcriber = get_transcriber()
 
+        assert isinstance(transcriber, LocalWhisperTranscriber)
         assert transcriber.model == "Systran/faster-whisper-small"
         assert transcriber.language == "ru"
         assert transcriber.device == "cuda"
@@ -239,4 +240,5 @@ class TestLocalProvider:
         second = get_transcriber()
 
         assert first is not second
+        assert isinstance(second, LocalWhisperTranscriber)
         assert second.model == "Systran/faster-whisper-small"
