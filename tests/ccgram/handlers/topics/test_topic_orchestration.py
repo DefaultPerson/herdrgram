@@ -8,6 +8,8 @@ import pytest
 from telegram.error import BadRequest, RetryAfter, TelegramError, TimedOut
 
 from ccgram.multiplexer.base import WindowRef
+from ccgram.handlers.topics import topic_icons
+from ccgram.handlers.topics.topic_icons import TOPIC_ICON_COLORS
 from ccgram.handlers.topics.topic_orchestration import (
     collect_target_chats,
     _is_pending_user_creation,
@@ -710,6 +712,176 @@ class TestCreateForumTopicTransientRetry:
         assert bot.create_forum_topic.call_count == 2
         assert not _is_pending_user_creation(event.window_id)
         assert -100500 in _topic_create_retry_until
+
+
+class TestRandomTopicIcon:
+    """CCGRAM_TOPIC_RANDOM_ICON: a random icon on every topic CCGram creates."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_icon_state(self):
+        topic_icons._reset_icon_state_for_testing()
+        yield
+        topic_icons._reset_icon_state_for_testing()
+
+    @staticmethod
+    def _bot(*icon_ids: str) -> AsyncMock:
+        bot = AsyncMock()
+        bot.create_forum_topic = AsyncMock(return_value=_make_topic(thread_id=42))
+        bot.get_forum_topic_icon_stickers = AsyncMock(
+            return_value=tuple(
+                MagicMock(custom_emoji_id=icon_id) for icon_id in icon_ids
+            )
+        )
+        return bot
+
+    async def test_flag_off_creates_the_topic_exactly_as_upstream(self) -> None:
+        event = _make_event()
+        bot = self._bot("icon-1")
+
+        with (
+            patch("ccgram.handlers.topics.topic_orchestration.session_manager"),
+            patch(
+                "ccgram.handlers.topics.topic_orchestration.thread_router"
+            ) as mock_tr,
+            patch("ccgram.handlers.topics.topic_orchestration.config") as mock_config,
+        ):
+            mock_tr.has_window.return_value = False
+            mock_tr.iter_thread_bindings.return_value = iter([])
+            mock_config.group_id = -100500
+            mock_config.allowed_users = {12345}
+
+            assert await handle_new_window(event, bot) is True
+
+        bot.create_forum_topic.assert_awaited_once_with(
+            chat_id=-100500, name="my-project"
+        )
+        bot.get_forum_topic_icon_stickers.assert_not_awaited()
+
+    async def test_flag_on_sends_a_random_icon_and_colour(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(topic_icons.config, "topic_random_icon", True)
+        event = _make_event()
+        bot = self._bot("icon-1", "icon-2")
+
+        with (
+            patch("ccgram.handlers.topics.topic_orchestration.session_manager"),
+            patch(
+                "ccgram.handlers.topics.topic_orchestration.thread_router"
+            ) as mock_tr,
+            patch("ccgram.handlers.topics.topic_orchestration.config") as mock_config,
+        ):
+            mock_tr.has_window.return_value = False
+            mock_tr.iter_thread_bindings.return_value = iter([])
+            mock_config.group_id = -100500
+            mock_config.allowed_users = {12345}
+
+            assert await handle_new_window(event, bot) is True
+
+        kwargs = bot.create_forum_topic.await_args.kwargs
+        assert kwargs["chat_id"] == -100500
+        assert kwargs["name"] == "my-project"
+        assert kwargs["icon_custom_emoji_id"] in {"icon-1", "icon-2"}
+        assert kwargs["icon_color"] in TOPIC_ICON_COLORS
+
+    async def test_unreachable_icon_list_still_creates_the_topic(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(topic_icons.config, "topic_random_icon", True)
+        event = _make_event()
+        bot = self._bot()
+        bot.get_forum_topic_icon_stickers = AsyncMock(
+            side_effect=TelegramError("no icons for you")
+        )
+
+        with (
+            patch("ccgram.handlers.topics.topic_orchestration.session_manager"),
+            patch(
+                "ccgram.handlers.topics.topic_orchestration.thread_router"
+            ) as mock_tr,
+            patch("ccgram.handlers.topics.topic_orchestration.config") as mock_config,
+        ):
+            mock_tr.has_window.return_value = False
+            mock_tr.iter_thread_bindings.return_value = iter([])
+            mock_config.group_id = -100500
+            mock_config.allowed_users = {12345}
+
+            assert await handle_new_window(event, bot) is True
+
+        kwargs = bot.create_forum_topic.await_args.kwargs
+        assert "icon_custom_emoji_id" not in kwargs
+        assert kwargs["icon_color"] in TOPIC_ICON_COLORS
+        mock_tr.bind_thread.assert_called_once()
+
+    async def test_refused_icon_is_retried_without_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(topic_icons.config, "topic_random_icon", True)
+        event = _make_event()
+        bot = self._bot("icon-1")
+        bot.create_forum_topic = AsyncMock(
+            side_effect=[BadRequest("TOPIC_ICON_INVALID"), _make_topic(thread_id=42)]
+        )
+
+        with (
+            patch("ccgram.handlers.topics.topic_orchestration.session_manager"),
+            patch(
+                "ccgram.handlers.topics.topic_orchestration.thread_router"
+            ) as mock_tr,
+            patch("ccgram.handlers.topics.topic_orchestration.config") as mock_config,
+            patch(
+                "ccgram.handlers.topics.topic_orchestration.asyncio.sleep",
+                new_callable=AsyncMock,
+            ) as mock_sleep,
+        ):
+            mock_tr.has_window.return_value = False
+            mock_tr.iter_thread_bindings.return_value = iter([])
+            mock_config.group_id = -100500
+            mock_config.allowed_users = {12345}
+
+            assert await handle_new_window(event, bot) is True
+
+        assert bot.create_forum_topic.await_count == 2
+        first, second = bot.create_forum_topic.await_args_list
+        assert first.kwargs["icon_custom_emoji_id"] == "icon-1"
+        assert "icon_custom_emoji_id" not in second.kwargs
+        # The colour survives the icon being dropped, and dropping it costs no
+        # transient-retry backoff.
+        assert second.kwargs["icon_color"] == first.kwargs["icon_color"]
+        mock_sleep.assert_not_awaited()
+
+    async def test_a_refusing_chat_stops_being_offered_icons(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(topic_icons.config, "topic_random_icon", True)
+        bot = self._bot("icon-1")
+        bot.create_forum_topic = AsyncMock(
+            side_effect=[
+                BadRequest("TOPIC_ICON_INVALID"),
+                _make_topic(thread_id=42),
+                _make_topic(thread_id=43),
+            ]
+        )
+
+        with (
+            patch("ccgram.handlers.topics.topic_orchestration.session_manager"),
+            patch(
+                "ccgram.handlers.topics.topic_orchestration.thread_router"
+            ) as mock_tr,
+            patch("ccgram.handlers.topics.topic_orchestration.config") as mock_config,
+        ):
+            mock_tr.has_window.return_value = False
+            mock_tr.iter_thread_bindings.return_value = iter([])
+            mock_config.group_id = -100500
+            mock_config.allowed_users = {12345}
+
+            await handle_new_window(_make_event(window_id="@10"), bot)
+            await handle_new_window(_make_event(window_id="@11"), bot)
+
+        assert bot.create_forum_topic.await_count == 3
+        last = bot.create_forum_topic.await_args_list[-1]
+        assert "icon_custom_emoji_id" not in last.kwargs
+        assert last.kwargs["icon_color"] in TOPIC_ICON_COLORS
 
 
 class TestAdoptUnboundWindows:

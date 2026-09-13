@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 import time
 from pathlib import Path
+from typing import Any
 
 import structlog
 from telegram.error import BadRequest, NetworkError, RetryAfter, TelegramError, TimedOut
@@ -37,6 +38,7 @@ from ...multiplexer.base import canonical_window_id
 from ...window_state_ports import identity_state
 from ..recovery.transcript_discovery import seed_session_from_native_id
 from ..status.topic_emoji import strip_emoji_prefix
+from .topic_icons import ICON_EMOJI_KEY, note_icon_refused, pick_topic_icon
 from .topic_probe import probe_topic_exists
 
 logger = structlog.get_logger()
@@ -88,20 +90,48 @@ async def _window_topic_lock(window_id: str):
 
 
 async def _create_forum_topic_with_retry(
-    client: TelegramClient, chat_id: int, topic_name: str
+    client: TelegramClient, chat_id: int, topic_name: str, **extra: Any
 ):
-    """Call ``client.create_forum_topic`` with one retry on TimedOut/NetworkError."""
+    """Call ``client.create_forum_topic`` with one retry on TimedOut/NetworkError.
+
+    ``extra`` carries the optional random-icon parameters. A chat may accept
+    ``icon_color`` but refuse ``icon_custom_emoji_id`` (a private-chat forum,
+    or an emoji this bot may not spend), which arrives as a ``BadRequest``.
+    The icon is decoration and the topic is not, so that one case drops the
+    icon and retries immediately, without spending a transient retry. The icon
+    can be dropped only once, so the loop still terminates; the chat is marked
+    as icon-refusing only once the icon-less call actually succeeds, which is
+    what tells an icon rejection apart from a rejection of the topic itself.
+    """
     last_exc: TelegramError | None = None
-    for attempt in range(_TOPIC_CREATE_TRANSIENT_RETRIES + 1):
+    attempt = 0
+    icon_dropped = False
+    while attempt <= _TOPIC_CREATE_TRANSIENT_RETRIES:
         try:
-            return await client.create_forum_topic(chat_id=chat_id, name=topic_name)
+            topic = await client.create_forum_topic(
+                chat_id=chat_id, name=topic_name, **extra
+            )
         except (TimedOut, NetworkError) as exc:
+            if isinstance(exc, BadRequest) and ICON_EMOJI_KEY in extra:
+                logger.warning(
+                    "Topic icon refused, creating the topic without one",
+                    chat_id=chat_id,
+                    error=str(exc),
+                )
+                del extra[ICON_EMOJI_KEY]
+                icon_dropped = True
+                continue
             last_exc = exc
-            if attempt < _TOPIC_CREATE_TRANSIENT_RETRIES:
+            attempt += 1
+            if attempt <= _TOPIC_CREATE_TRANSIENT_RETRIES:
                 logger.debug("create_forum_topic transient error, retrying: %s", exc)
                 await asyncio.sleep(_TOPIC_CREATE_TRANSIENT_BACKOFF_S)
                 continue
             raise
+        else:
+            if icon_dropped:
+                note_icon_refused(chat_id)
+            return topic
     assert last_exc is not None
     raise last_exc
 
@@ -404,7 +434,10 @@ async def create_topic_in_chat(
 
     register_pending_creation(window_id, now=now)
     try:
-        topic = await _create_forum_topic_with_retry(client, chat_id, topic_name)
+        icon_kwargs = await pick_topic_icon(client, chat_id)
+        topic = await _create_forum_topic_with_retry(
+            client, chat_id, topic_name, **icon_kwargs
+        )
         _topic_create_retry_until.pop(chat_id, None)
         logger.info(
             "Auto-created topic '%s' (thread=%d) in chat %d for window %s",

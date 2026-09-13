@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from telegram import BotCommand, InputMedia, Message
+from telegram import BotCommand, InputMedia, Message, Sticker
 
 from telegram.error import TelegramError
 
@@ -36,6 +36,7 @@ def fake_bot() -> MagicMock:
         "get_me",
         "get_file",
         "create_forum_topic",
+        "get_forum_topic_icon_stickers",
         "edit_forum_topic",
         "close_forum_topic",
         "delete_forum_topic",
@@ -117,6 +118,27 @@ class TestPTBTelegramClient:
         client = PTBTelegramClient(fake_bot)
         await client.create_forum_topic(chat_id=1, name="topic")
         fake_bot.create_forum_topic.assert_awaited_once_with(chat_id=1, name="topic")
+
+    async def test_create_forum_topic_passes_icon_parameters_through(
+        self, fake_bot: MagicMock
+    ):
+        client = PTBTelegramClient(fake_bot)
+        await client.create_forum_topic(
+            chat_id=1, name="topic", icon_color=7322096, icon_custom_emoji_id="icon-1"
+        )
+        fake_bot.create_forum_topic.assert_awaited_once_with(
+            chat_id=1, name="topic", icon_color=7322096, icon_custom_emoji_id="icon-1"
+        )
+
+    async def test_get_forum_topic_icon_stickers_delegates(self, fake_bot: MagicMock):
+        stickers = (MagicMock(spec=Sticker),)
+        fake_bot.get_forum_topic_icon_stickers.return_value = stickers
+
+        client = PTBTelegramClient(fake_bot)
+        result = await client.get_forum_topic_icon_stickers()
+
+        assert result is stickers
+        fake_bot.get_forum_topic_icon_stickers.assert_awaited_once_with()
 
     async def test_edit_forum_topic_delegates(self, fake_bot: MagicMock):
         client = PTBTelegramClient(fake_bot)
@@ -279,6 +301,34 @@ class TestFakeTelegramClient:
         create = client.last_call("create_forum_topic")
         assert create is not None
         assert create.kwargs["icon_color"] == 0
+
+    async def test_records_forum_topic_icon_parameters(self):
+        client = FakeTelegramClient()
+        await client.create_forum_topic(
+            chat_id=1, name="topic", icon_color=7322096, icon_custom_emoji_id="icon-1"
+        )
+
+        create = client.last_call("create_forum_topic")
+        assert create is not None
+        assert create.kwargs == {
+            "chat_id": 1,
+            "name": "topic",
+            "icon_color": 7322096,
+            "icon_custom_emoji_id": "icon-1",
+        }
+
+    async def test_icon_stickers_default_to_an_empty_list(self):
+        client = FakeTelegramClient()
+
+        assert await client.get_forum_topic_icon_stickers() == ()
+        assert client.call_count("get_forum_topic_icon_stickers") == 1
+
+    async def test_icon_stickers_can_be_seeded(self):
+        client = FakeTelegramClient()
+        stickers = (MagicMock(spec=Sticker),)
+        client.returns["get_forum_topic_icon_stickers"] = stickers
+
+        assert await client.get_forum_topic_icon_stickers() is stickers
 
 
 class TestSetSideEffect:

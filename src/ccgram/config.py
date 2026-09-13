@@ -255,9 +255,9 @@ class Config:
         ).lower() in ("1", "true", "yes")
 
     def _init_topic_naming(self) -> None:
-        """How a topic is titled, and which side of the bridge may rename it.
+        """How a topic is titled and decorated, and which side may rename it.
 
-        All three default to the upstream behaviour.
+        All four default to the upstream behaviour.
         """
         # Upstream prefixes every topic title with a state emoji and appends an
         # RC/YOLO badge, which means an editForumTopic call (and a "topic
@@ -275,6 +275,14 @@ class Config:
         self.mux_rename_from_telegram: bool = os.getenv(
             "CCGRAM_MUX_RENAME_FROM_TELEGRAM", "true"
         ).lower() not in ("0", "false", "no")
+        # Upstream creates every topic with Telegram's default icon, so a chat
+        # of agent topics is one grey column. CCGRAM_TOPIC_RANDOM_ICON=true
+        # gives each topic CCGram creates a random icon from
+        # getForumTopicIconStickers and a random colour, purely to tell them
+        # apart at a glance.
+        self.topic_random_icon: bool = os.getenv(
+            "CCGRAM_TOPIC_RANDOM_ICON", ""
+        ).lower() in ("1", "true", "yes")
         # herdr topic titles. "full" (default) keeps the upstream
         # "<Provider> ▸ <workspace> ▸ <tab> ▸ <pane>" label; "tab" uses the
         # herdr tab label on its own, so a topic reads exactly like the herdr

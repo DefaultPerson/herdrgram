@@ -26,7 +26,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast, runtime_checkable
 
-from telegram import Bot, BotCommand, ChatFullInfo, File, ForumTopic, Message, User
+from telegram import (
+    Bot,
+    BotCommand,
+    ChatFullInfo,
+    File,
+    ForumTopic,
+    Message,
+    Sticker,
+    User,
+)
 from telegram._botcommandscope import BotCommandScope
 from telegram._files.inputmedia import InputMedia
 from telegram._reaction import ReactionType
@@ -128,6 +137,11 @@ class TelegramClient(Protocol):
         name: str,
         **kwargs: Any,
     ) -> ForumTopic: ...
+
+    async def get_forum_topic_icon_stickers(
+        self,
+        **kwargs: Any,
+    ) -> tuple[Sticker, ...]: ...
 
     async def edit_forum_topic(
         self,
@@ -299,6 +313,9 @@ class PTBTelegramClient:
         self, chat_id: int | str, name: str, **kwargs: Any
     ) -> ForumTopic:
         return await self._bot.create_forum_topic(chat_id=chat_id, name=name, **kwargs)
+
+    async def get_forum_topic_icon_stickers(self, **kwargs: Any) -> tuple[Sticker, ...]:
+        return await self._bot.get_forum_topic_icon_stickers(**kwargs)
 
     async def edit_forum_topic(
         self, chat_id: int | str, message_thread_id: int, **kwargs: Any
@@ -542,6 +559,9 @@ class FakeTelegramClient:
             "create_forum_topic", {"chat_id": chat_id, "name": name, **kwargs}
         )
 
+    async def get_forum_topic_icon_stickers(self, **kwargs: Any) -> tuple[Sticker, ...]:
+        return self._record("get_forum_topic_icon_stickers", kwargs)
+
     async def edit_forum_topic(
         self, chat_id: int | str, message_thread_id: int, **kwargs: Any
     ) -> bool:
@@ -613,6 +633,8 @@ _DEFAULT_RETURNS: dict[str, Any] = {
     "close_forum_topic": True,
     "delete_forum_topic": True,
     "unpin_all_forum_topic_messages": True,
+    # No icons unless a test seeds them, so the icon picker degrades to colour.
+    "get_forum_topic_icon_stickers": (),
     "delete_my_commands": True,
     "set_my_commands": True,
 }

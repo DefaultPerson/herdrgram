@@ -244,6 +244,24 @@ class TestTopicNameDecorations:
 
 
 @pytest.mark.usefixtures("_base_env")
+class TestTopicRandomIcon:
+    def test_random_icon_default_false(self, monkeypatch):
+        """Upstream creates every topic with Telegram's default icon."""
+        monkeypatch.delenv("CCGRAM_TOPIC_RANDOM_ICON", raising=False)
+        assert Config().topic_random_icon is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "True", "YES"])
+    def test_random_icon_enabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_TOPIC_RANDOM_ICON", value)
+        assert Config().topic_random_icon is True
+
+    @pytest.mark.parametrize("value", ["", "0", "false", "no", "off"])
+    def test_random_icon_disabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_TOPIC_RANDOM_ICON", value)
+        assert Config().topic_random_icon is False
+
+
+@pytest.mark.usefixtures("_base_env")
 class TestMuxRenameFromTelegram:
     def test_rename_default_true(self, monkeypatch):
         """Upstream pushes a Telegram topic rename into the multiplexer."""

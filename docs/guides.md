@@ -241,6 +241,7 @@ All settings accept both CLI flags and environment variables. CLI flags take pre
 | `CCGRAM_ECHO_USER_MESSAGES`                          | `true`                         | Set `false` to drop the 👤 echo of text typed in the terminal (Telegram-sent text is unaffected)      |
 | `CCGRAM_HERDR_NOTIFY_ON_INJECT`                      | `false`                        | Set `true` to raise a silent desktop notification when a Telegram message lands in a pane (herdr)    |
 | `CCGRAM_TOPIC_NAME_DECORATIONS`                      | `true`                         | Set `false` for plain topic names: no status emoji, no RC/YOLO badge, no rename on a state change    |
+| `CCGRAM_TOPIC_RANDOM_ICON`                           | `false`                        | Set `true` to give every topic CCGram creates a random forum icon and colour                         |
 | `CCGRAM_MUX_RENAME_FROM_TELEGRAM`                    | `true`                         | Set `false` to stop a Telegram topic rename from renaming the multiplexer window (herdr: the tab)    |
 | `CCGRAM_HERDR_TOPIC_LABEL`                           | `full`                         | herdr topic label: `full` (provider/workspace/tab/pane) or `tab` (the herdr tab label alone)         |
 | `CCGRAM_VOICE_AUTOSEND`                              | `false`                        | Set `true` to send voice transcriptions without confirmation; transcription is still shown           |
@@ -281,6 +282,14 @@ By default a topic title carries its state: a status emoji in front, plus 📡 w
 Set `CCGRAM_TOPIC_NAME_DECORATIONS=false` and a topic title becomes exactly its display name. No emoji, no badges, and — because the title no longer encodes anything that a state change alters — no rename at all when the agent goes from working to idle to done. Status is still available everywhere else: the status bubble, `/sessions`, and the toolbar are unaffected.
 
 Names still flow *into* Telegram. When the display name itself changes, because a herdr tab or a tmux window was renamed, the topic is renamed to match on the next poll cycle. A topic inherited from a run with decorations on is repaired to its clean name the first time the bot sees it.
+
+## Random Topic Icons
+
+Every topic CCGram creates carries Telegram's default icon, so a chat with a dozen agent topics is one grey column in the sidebar.
+
+Set `CCGRAM_TOPIC_RANDOM_ICON=true` and each topic CCGram creates gets a random icon from `getForumTopicIconStickers` — the emoji set every bot may use — plus one of the six `icon_color` values Telegram accepts. The sticker list is fetched once per process, and each chat prefers an icon it has not spent yet, so neighbouring topics rarely look alike; once every icon is taken, repeats resume.
+
+The icon is decoration and never costs a topic. If the icon list cannot be fetched, or the chat refuses a custom icon — a private-chat forum may — the topic is created with the random colour alone, and that chat is not offered a custom icon again for the rest of the run. Topics you create by hand in Telegram keep whatever icon you picked; this flag only governs the ones CCGram creates.
 
 ## One-Way Name Sync
 
