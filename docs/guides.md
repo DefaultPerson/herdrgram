@@ -589,6 +589,14 @@ Live view (auto-refreshing) uses the same viewport capture at a smaller font siz
 
 Responses longer than 4096 characters are sent as a `.txt` document attachment instead of a text message.
 
+## Focus in the Terminal UI (`/show`)
+
+`/show` brings the pane bound to the current topic to the front of the multiplexer UI — the reverse of a screenshot: instead of pulling the terminal into Telegram, it puts your desk in front of the session that is talking.
+
+Only backends that declare `supports_focus` can do this. herdr raises the exact pane resolved for the topic's guarded target (`herdr agent focus <terminal>`, falling back to `herdr tab focus <tab>` when the pane no longer publishes an agent); tmux and agterm reply `Focus is not supported by this multiplexer backend.` — a tmux client may be attached anywhere or nowhere, so there is no window to raise.
+
+Replies are one line: `👁 Focused in the terminal UI`, or `Could not focus: session not found.` when the session is gone. The same action is available as the optional 👁 **Show** toolbar button.
+
 ## File Delivery (`/send`)
 
 Send files from the bound window's working directory to Telegram. Three modes in one command:
@@ -618,6 +626,8 @@ Tunables: `CCGRAM_SEND_SEARCH_DEPTH` (default 5), `CCGRAM_SEND_MAX_RESULTS` (def
 
 Toggle actions (Mode = Shift+Tab, Think = Tab, YOLO = Ctrl+Y) capture the pane ~250 ms after the key press and report the resulting mode-line in the toast (e.g., `auto-accept edits on`).
 
+One built-in action is off the default grids: 👁 **Show** (`show`) focuses the bound session in the multiplexer UI, the button form of [`/show`](#focus-in-the-terminal-ui-show). Add it to a row in `~/.ccgram/toolbar.toml` if your backend supports focus (herdr) — on tmux and agterm it answers that the backend cannot focus.
+
 ### Custom Toolbar
 
 Place a TOML file at `~/.ccgram/toolbar.toml` (or set `CCGRAM_TOOLBAR_CONFIG=/path/to/file`). See `docs/examples/toolbar.toml` for a fully annotated example. Schema:
@@ -642,7 +652,7 @@ Action types:
 
 - `key` — send a tmux key sequence (`"Tab"`, `"C-c"`, `'\x1b[Z'`). Set `literal=true` for raw byte sequences (TOML literal strings — single-quoted).
 - `text` — send literal text + Enter (e.g. `"/clear"`, prompt templates).
-- `builtin` — reserved (`screen`, `ctrlc`, `live`, `getfile`, `last`, `close`). Users cannot define new ones.
+- `builtin` — reserved (`screen`, `ctrlc`, `live`, `getfile`, `last`, `show`, `close`). Users cannot define new ones.
 
 Action names must be ≤24 chars (callback_data budget). Providers absent from the TOML keep their built-in defaults. Malformed entries are logged and skipped — the loader never raises.
 

@@ -292,6 +292,16 @@ class TestBuiltins:
         assert action.payload == "lastreply"
         assert action.emoji == "\U0001f4c4"
 
+    def test_show_is_builtin_and_absent_from_default_layouts(self) -> None:
+        action = BUILTIN_ACTIONS["show"]
+        assert action.action_type == "builtin"
+        assert action.payload == "show"
+        assert action.emoji == "\U0001f441"
+        # Opt-in only: focus is herdr-only, so no default grid claims the cell.
+        for provider, layout in DEFAULT_LAYOUTS.items():
+            names = [name for row in layout.buttons for name in row]
+            assert "show" not in names, f"{provider}: show must stay opt-in"
+
     def test_mode_is_literal_with_read_state(self) -> None:
         mode = BUILTIN_ACTIONS["mode"]
         assert mode.action_type == "key"

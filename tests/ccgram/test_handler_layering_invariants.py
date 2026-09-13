@@ -104,6 +104,8 @@ _SINGLETON_ALLOWLIST = frozenset(
         "send/send_callbacks.py",
         "send/send_command.py",
         "sessions_dashboard.py",
+        # /show resolves window_id via thread_router (same routing as /last, /split).
+        "show_command.py",
         # /split resolves window_id via thread_router (same routing as /last, /panes).
         "split_command.py",
         "shell/shell_capture.py",

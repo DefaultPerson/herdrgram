@@ -835,6 +835,16 @@ class AgtermManager:
         del window_id
         return None
 
+    async def focus_window(self, window_id: str) -> bool:
+        """Always False — agterm declares ``supports_focus=False``.
+
+        Creation already passes ``--no-select`` so automation never steals the
+        selection from whoever is at the keyboard; there is no counterpart
+        that raises one session on demand.
+        """
+        logger.debug("focus is unsupported on the agterm backend", window_id=window_id)
+        return False
+
     @staticmethod
     def _abandon(window_id: str, reason: str, closed: bool) -> str:
         """Compose the failure message, saying so when the cleanup close failed.

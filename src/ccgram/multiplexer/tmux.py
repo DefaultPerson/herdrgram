@@ -824,6 +824,16 @@ class TmuxManager:
 
         return await asyncio.to_thread(_sync_split)
 
+    async def focus_window(self, window_id: str) -> bool:
+        """Always False — tmux has no UI to raise (``supports_focus=False``).
+
+        A tmux client may be attached anywhere, or nowhere, so selecting the
+        window would move a session the user is not looking at. Callers gate
+        on the capability and report that the backend cannot focus.
+        """
+        logger.debug("focus is unsupported on the tmux backend", window_id=window_id)
+        return False
+
     async def capture_pane_by_id(
         self,
         pane_id: str,

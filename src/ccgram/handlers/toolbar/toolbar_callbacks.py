@@ -33,6 +33,7 @@ from ..callback_helpers import get_thread_id, user_owns_window
 from ..telegram_origin import send_telegram_to_window
 from ..callback_tokens import resolve_callback_data
 from ..callback_registry import register
+from ..show_command import focus_bound_window
 from .toolbar_keyboard import get_toolbar_config, refresh_button_label
 
 if TYPE_CHECKING:
@@ -239,6 +240,18 @@ async def _builtin_last(
     await query.answer()
 
 
+async def _builtin_show(
+    _action: ToolbarAction,
+    query: CallbackQuery,
+    window_id: str,
+    _update: Update,
+    _context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Builtin: raise the bound session in the multiplexer UI (same as /show)."""
+    ok, text = await focus_bound_window(window_id)
+    await query.answer(text, show_alert=not ok)
+
+
 async def _builtin_dismiss(
     _action: ToolbarAction,
     query: CallbackQuery,
@@ -263,6 +276,7 @@ _BUILTIN_DISPATCH: dict[str, _BuiltinHandler] = {
     "live": _builtin_live,
     "getfile": _builtin_getfile,
     "lastreply": _builtin_last,
+    "show": _builtin_show,
     "dismiss": _builtin_dismiss,
 }
 

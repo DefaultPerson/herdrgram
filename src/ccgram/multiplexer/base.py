@@ -279,6 +279,15 @@ class MultiplexerCapabilities:
     native_topic_targets: bool = False
     """True when creation must use the backend's guarded topic-target flow."""
 
+    supports_focus: bool = False
+    """True when the backend can raise one window in its own UI (herdr).
+
+    Gates ``focus_window`` and the ``/show`` command: tmux and agterm have no
+    addressable UI to bring forward from outside, so they declare False and
+    the caller says the backend cannot do it instead of reporting a silent
+    no-op as success.
+    """
+
 
 # ── Protocol ───────────────────────────────────────────────────────────
 
@@ -502,6 +511,17 @@ class Multiplexer(Protocol):
         locators cannot satisfy their public identity boundary return None;
         callers must report that split is unsupported rather than use a raw
         locator. None also covers a gone window or backend error.
+        """
+        ...
+
+    async def focus_window(self, window_id: str) -> bool:
+        """Bring *window_id* to the foreground in the multiplexer UI.
+
+        Only meaningful on backends with ``capabilities.supports_focus``
+        (herdr raises the pane resolved for the target). Returns False when
+        the backend has no UI to raise, when the window can no longer be
+        resolved, or when the backend refuses the request — callers gate on
+        the capability first and report the result, never assume success.
         """
         ...
 

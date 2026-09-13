@@ -81,6 +81,7 @@ _BOT_COMMANDS: list[tuple[str, str]] = [
     ("screenshot", "Capture terminal screenshot"),
     ("live", "Open auto-refreshing terminal view"),
     ("panes", "List panes in this window"),
+    ("show", "Focus this session in the terminal UI"),
     ("restore", "Recover a dead topic"),
     ("sync", "Audit and fix state"),
     ("unbind", "Unbind this topic"),

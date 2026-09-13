@@ -108,6 +108,7 @@ _HERDR_CAPABILITIES = MultiplexerCapabilities(
     supports_display_name_rebind=False,
     supports_workspace_selection=True,
     native_topic_targets=True,
+    supports_focus=True,
 )
 
 # Filter for self-hosted / internal workspaces and tabs (e.g. ``__main__``).
@@ -1064,6 +1065,26 @@ class HerdrManager:
         if not ok:
             await self._after_action_failure(window_id)
         return ok
+
+    async def focus_window(self, window_id: str) -> bool:
+        """Raise the pane freshly resolved for *window_id* in the herdr UI.
+
+        ``agent focus`` takes the terminal ID, so the exact pane behind this
+        target is selected even when its tab hosts sibling sessions. A pane
+        whose agent herdr no longer publishes answers ``agent_not_found``;
+        focusing its tab still puts the user in front of the right window, so
+        that is the fallback rather than a failure.
+        """
+        try:
+            record = await self.guard_session_target(window_id)
+        except HerdrError:
+            return False
+        if await self._call_ok(["agent", "focus", record.terminal_id]):
+            return True
+        if record.tab_id and await self._call_ok(["tab", "focus", record.tab_id]):
+            return True
+        await self._after_action_failure(window_id)
+        return False
 
     async def rename_window(self, window_id: str, new_name: str) -> bool:
         try:

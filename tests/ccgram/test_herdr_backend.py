@@ -529,6 +529,63 @@ async def test_kill_window_closes_only_target_session_pane_in_shared_tab() -> No
     ]
 
 
+async def test_focus_window_raises_the_freshly_resolved_terminal() -> None:
+    """The terminal id, not the tab: a shared tab must not focus a sibling."""
+    fake = _live_fake(_agent(pane_id="w7:p4", tab_id="w7:t3")).on(
+        "agent", "focus", out=_result(type="agent_info")
+    )
+
+    assert await _manager(fake).focus_window(_target())
+
+    assert fake.calls == [
+        ["agent", "list"],
+        ["agent", "focus", "term-a"],
+    ]
+
+
+async def test_focus_window_falls_back_to_the_hosting_tab() -> None:
+    """A pane herdr no longer publishes as an agent still has a tab to raise."""
+    fake = (
+        _live_fake(_agent(pane_id="w7:p4", tab_id="w7:t3"))
+        .on("agent", "focus", rc=1, out=_result(error={"code": "agent_not_found"}))
+        .on("tab", "focus", out=_result(type="tab_info"))
+    )
+
+    assert await _manager(fake).focus_window(_target())
+
+    assert fake.calls == [
+        ["agent", "list"],
+        ["agent", "focus", "term-a"],
+        ["tab", "focus", "w7:t3"],
+    ]
+
+
+async def test_focus_window_fails_closed_on_an_unresolved_target() -> None:
+    fake = _live_fake(_agent(value="session-a"))
+
+    assert not await _manager(fake).focus_window(_target("gone"))
+
+    assert fake.calls == [["agent", "list"]]
+
+
+async def test_focus_window_records_the_post_guard_race_when_both_calls_fail() -> None:
+    fake = (
+        _live_fake(_agent(pane_id="w7:p4", tab_id="w7:t3"))
+        .on("agent", "focus", rc=1, err="nope")
+        .on("tab", "focus", rc=1, err="nope")
+    )
+
+    assert not await _manager(fake).focus_window(_target())
+
+    # One refresh observation after the failure — never a retarget.
+    assert fake.calls == [
+        ["agent", "list"],
+        ["agent", "focus", "term-a"],
+        ["tab", "focus", "w7:t3"],
+        ["agent", "list"],
+    ]
+
+
 async def test_rename_window_refuses_shared_tab_without_renaming_siblings() -> None:
     first = _agent(pane_id="w7:p4", tab_id="w7:t3", value="session-a")
     sibling = _agent(pane_id="w7:p5", tab_id="w7:t3", value="session-b")

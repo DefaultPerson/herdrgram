@@ -355,6 +355,29 @@ class TestDispatchBuiltinLast:
         query.answer.assert_awaited_once_with("Use in a topic", show_alert=True)
 
 
+class TestDispatchBuiltinShow:
+    async def test_focuses_the_window_through_the_shared_helper(self) -> None:
+        focus = AsyncMock(return_value=(True, "\U0001f441 Focused in the terminal UI"))
+        with (
+            patch(f"{_CB}.user_owns_window", return_value=True),
+            patch(f"{_CB}.focus_bound_window", focus),
+        ):
+            query = await _dispatch("tb:@5:show")
+        focus.assert_awaited_once_with("@5")
+        query.answer.assert_awaited_once_with(
+            "\U0001f441 Focused in the terminal UI", show_alert=False
+        )
+
+    async def test_failure_is_shown_as_an_alert(self) -> None:
+        focus = AsyncMock(return_value=(False, "❌ nope"))
+        with (
+            patch(f"{_CB}.user_owns_window", return_value=True),
+            patch(f"{_CB}.focus_bound_window", focus),
+        ):
+            query = await _dispatch("tb:@5:show")
+        query.answer.assert_awaited_once_with("❌ nope", show_alert=True)
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Dispatch — error paths
 # ──────────────────────────────────────────────────────────────────────

@@ -158,6 +158,7 @@ def test_capability_values() -> None:
     assert caps.supports_workspace_selection is True
     assert caps.native_topic_targets is False
     assert caps.native_agent_status is True
+    assert caps.supports_focus is False
 
 
 def test_agterm_native_status_is_reported() -> None:

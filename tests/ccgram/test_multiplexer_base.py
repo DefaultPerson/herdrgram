@@ -48,6 +48,21 @@ class TestValueTypeDefaults:
 # ── MultiplexerCapabilities ────────────────────────────────────────────
 
 
+def test_capabilities_default_to_no_focus() -> None:
+    """A backend that says nothing cannot raise a window in a UI."""
+    caps = MultiplexerCapabilities(
+        name="tmux",
+        ids_stable_across_restart=True,
+        exposes_pane_tty=True,
+        native_agent_status=False,
+        read_max_lines=None,
+        self_identify_env="TMUX_PANE",
+        supports_event_stream=False,
+        native_worktrees=False,
+    )
+    assert caps.supports_focus is False
+
+
 def test_capabilities_are_immutable() -> None:
     caps = MultiplexerCapabilities(
         name="tmux",
@@ -155,6 +170,7 @@ def test_multiplexer_protocol_has_expected_methods() -> None:
         "find_window_by_id",
         "capture_pane",
         "stamp_pane_title",
+        "focus_window",
     }
     actual = {name for name in dir(Multiplexer) if not name.startswith("_")}
     missing = expected - actual

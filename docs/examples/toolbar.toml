@@ -10,6 +10,9 @@
 # Built-in actions (always available, no need to redefine):
 #
 #   screen ctrlc live getfile last close   (builtin handlers)
+#   show                                   (builtin: focus the session in the
+#                                            multiplexer UI — herdr only, not in
+#                                            any default grid; add it yourself)
 #   mode think yolo                        (toggle keys with state readback)
 #   esc enter tab eof susp up down         (plain key sends)
 #   model                                  (π — types /model to open the picker)
@@ -81,7 +84,7 @@ buttons = [
   ["mode",     "think",   "deepthink"],
   ["up",       "enter",   "down"     ],
   ["clear",    "compact", "esc"      ],
-  ["last",     "getfile", "close"    ],
+  ["last",     "getfile", "show", "close"],
 ]
 
 [providers.codex]

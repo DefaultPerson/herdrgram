@@ -155,6 +155,10 @@ BUILTIN_ACTIONS: dict[str, ToolbarAction] = {
         _b("live", "\U0001f4fa", "Live", "builtin", "live"),
         _b("getfile", "\U0001f4e5", "Get File", "builtin", "getfile"),
         _b("last", "\U0001f4c4", "Last", "builtin", "lastreply"),
+        # Focus the bound session in the multiplexer UI (herdr only — the
+        # dispatch reports backends without capabilities.supports_focus).
+        # Not in DEFAULT_LAYOUTS: add it to a grid via toolbar.toml.
+        _b("show", "\U0001f441", "Show", "builtin", "show"),
         _b("close", "\u2716", "Close", "builtin", "dismiss"),
         # Mode toggle — cycles Claude's permission modes via Shift-Tab.
         # read_state=True so the button label updates to Def/Edit/Plan/Full.
