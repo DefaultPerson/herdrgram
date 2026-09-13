@@ -163,24 +163,30 @@ async def _retire_expired_topic(
     delete is irreversible.  ``CCGRAM_DELETE_TOPIC_ON_AUTOCLOSE`` opts into the
     symmetric behaviour where an expired topic disappears; a delete Telegram
     refuses (no ``can_manage_topics``, topic not deletable) falls back to the
-    close so the topic is still retired.  A topic that is already gone is
-    re-raised untouched — the caller reads that as removed.
+    close so the topic is still retired — including the refusal Telegram
+    reports as a ``false`` result rather than an error, which
+    ``sync_command._delete_retired_topic`` reads the same way.  A topic that is
+    already gone is re-raised untouched — the caller reads that as removed.
     """
     if config.delete_topic_on_autoclose:
+        refusal: str | None = None
         try:
-            await client.delete_forum_topic(
+            deleted = await client.delete_forum_topic(
                 chat_id=chat_id, message_thread_id=thread_id
             )
-            return
+            if deleted is not False:
+                return
+            refusal = "delete_forum_topic returned false"
         except TelegramError as e:
             if is_thread_gone(e):
                 raise
-            logger.info(
-                "autoclose_delete_failed_closing_instead",
-                chat_id=chat_id,
-                thread_id=thread_id,
-                error=str(e),
-            )
+            refusal = str(e)
+        logger.info(
+            "autoclose_delete_failed_closing_instead",
+            chat_id=chat_id,
+            thread_id=thread_id,
+            error=refusal,
+        )
     await client.close_forum_topic(chat_id=chat_id, message_thread_id=thread_id)
 
 

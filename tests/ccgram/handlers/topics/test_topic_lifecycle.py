@@ -612,6 +612,20 @@ class TestAutocloseDeleteFlag:
         )
         router.unbind_thread.assert_called_once()
 
+    async def test_delete_reported_as_false_falls_back_to_close(self) -> None:
+        """Telegram can refuse with ``false`` instead of an error."""
+        from ccgram.handlers.topics import topic_lifecycle as tl
+
+        client = AsyncMock()
+        client.delete_forum_topic.return_value = False
+        with patch.object(tl.config, "delete_topic_on_autoclose", True):
+            router = await self._autoclose_done_topic(client)
+
+        client.close_forum_topic.assert_awaited_once_with(
+            chat_id=42, message_thread_id=100
+        )
+        router.unbind_thread.assert_called_once()
+
     async def test_gone_topic_is_not_closed_again(self) -> None:
         """A delete that reports the topic gone is already the end state."""
         from ccgram.handlers.topics import topic_lifecycle as tl
