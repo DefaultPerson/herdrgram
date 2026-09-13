@@ -227,12 +227,12 @@ def sample_pane_completed_turn():
     """
     sep = "─" * 90
     return (
-        "  Отдельно: watcher первого события ещё висит.\n"
+        "  Aside: the watcher for the first event is still hanging.\n"
         "\n"
         "✻ Sautéed for 2m 26s · done 11:06 AM · 1 shell still running\n"
         "\n"
         f"{sep}\n"
-        "❯ ок, жду отчет\n"
+        "❯ ok, waiting on the report\n"
         f"{sep}\n"
         "  ▌ dca-services › main › Opus 5 › high\n"
         "  ⏵⏵ bypass permissions on · 1 shell · ← for agents\n"
@@ -252,8 +252,8 @@ def sample_pane_update_banner():
     return (
         "✻ Sautéed for 2m 26s · done 11:06 AM · 1 shell still running\n"
         "\n"
-        "※ recap: Чинили тихую потерю сигналов в orbs-трекере.\n"
-        "  Логов стоит на 15:47 UTC.\n"
+        "※ recap: Fixed the silent signal loss in the orbs tracker.\n"
+        "  Logs are stuck at 15:47 UTC.\n"
         "                              ✔ Update installed · Restart to update\n"
         f"{sep}\n"
         "❯\n"

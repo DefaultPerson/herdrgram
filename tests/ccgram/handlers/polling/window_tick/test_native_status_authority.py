@@ -238,12 +238,12 @@ async def test_push_cache_is_read_before_the_subprocess(authority) -> None:
 
 def _finished_turn_pane() -> str:
     return (
-        "  Отдельно: watcher первого события ещё висит.\n"
+        "  Aside: the watcher for the first event is still hanging.\n"
         "\n"
         f"{_COMPLETED_TURN}\n"
         "\n"
         f"{_SEPARATOR}\n"
-        "❯ ок, жду отчет\n"
+        "❯ ok, waiting on the report\n"
         f"{_SEPARATOR}\n"
         "  ▌ dca-services › main › Opus 5 › high\n"
     )

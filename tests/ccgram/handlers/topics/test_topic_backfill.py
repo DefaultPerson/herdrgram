@@ -131,7 +131,7 @@ class TestBackfill:
 
         texts = _texts(_no_pacing)
         assert len(texts) == 11  # one header, then exactly ten messages
-        assert texts[0] == "⏮ В сессии 25 сообщений, пропущено 15 — ниже последние 10"
+        assert texts[0] == "⏮ 25 messages in this session, 15 skipped — last 10 below"
         assert texts[1] == "message 15"  # assistant turn
         assert texts[2] == "👤 message 16"  # user turns keep the /history prefix
         assert texts[-1] == "👤 message 24"
@@ -148,7 +148,7 @@ class TestBackfill:
             )
 
         texts = _texts(_no_pacing)
-        assert texts[0] == "⏮ Загружена вся история: 3 сообщений"
+        assert texts[0] == "⏮ Full history loaded: 3 messages"
         assert len(texts) == 4
 
     async def test_a_silent_session_sends_no_header(
@@ -251,7 +251,7 @@ class TestAutoCreatedTopic:
         assert monitor.calls == [("sess-1", TRANSCRIPT)]
         texts = _texts(_no_pacing)
         assert len(texts) == 11
-        assert texts[0] == "⏮ В сессии 25 сообщений, пропущено 15 — ниже последние 10"
+        assert texts[0] == "⏮ 25 messages in this session, 15 skipped — last 10 below"
         # Into the thread the topic was just created with, not the General lane.
         assert set(_threads(_no_pacing)) == {THREAD}
 
@@ -326,6 +326,6 @@ class TestWindowPickerBind:
 
         assert monitor.calls == [("sess-1", TRANSCRIPT)]
         texts = _texts(_no_pacing)
-        assert texts[0] == "⏮ В сессии 25 сообщений, пропущено 15 — ниже последние 10"
+        assert texts[0] == "⏮ 25 messages in this session, 15 skipped — last 10 below"
         assert len(texts) == 11
         assert set(_threads(_no_pacing)) == {THREAD}

@@ -4,10 +4,10 @@ Upstream creates a Telegram topic the moment discovery finds an unbound
 eligible window. ``CCGRAM_TOPIC_ON_DEMAND=true`` posts one offer to the General
 topic of every target chat instead:
 
-    🆕 Новая сессия: <name>
+    🆕 New session: <name>
     📁 <cwd>
     🤖 <provider>
-    [🧵 Открыть топик] [🙈 Скрыть]
+    [🧵 Open topic] [🙈 Hide]
 
 Accepting it runs the ordinary creation path (``create_topic_in_chat`` through
 ``handle_new_window``), so icons, naming and binding are identical to automatic
@@ -18,10 +18,10 @@ Three rules keep the offer from becoming noise:
 
   - one offer per window, remembered across a restart, so a bot that comes back
     up does not re-announce a window whose offer is still on screen;
-  - ``🙈 Скрыть`` is durable — a dismissed window is never offered again, though
+  - ``🙈 Hide`` is durable — a dismissed window is never offered again, though
     it remains bindable through ``/sessions`` and the ``/new`` window picker;
   - a window that dies while its offer is unanswered has the offer retired
-    (``⛔ Сессия завершена``) and forgotten.
+    (``⛔ Session ended``) and forgotten.
 
 Callback payloads carry a short minted token, never the window id: a herdr
 session target is 81 bytes and Telegram allows 64. The token map is part of the
@@ -77,16 +77,16 @@ _MAX_DISMISSED = 512
 
 # Announcement texts. Kept here as one block: they are the whole user-facing
 # surface of this feature and the tests pin them.
-ANNOUNCE_HEADER = "🆕 Новая сессия: {name}"
+ANNOUNCE_HEADER = "🆕 New session: {name}"
 ANNOUNCE_CWD = "📁 {cwd}"
 ANNOUNCE_PROVIDER = "🤖 {provider}"
-ANNOUNCE_OPENED = "🧵 Топик открыт: {name}"
-ANNOUNCE_DIED = "⛔ Сессия завершена: {name}"
-ANNOUNCE_HIDDEN = "🙈 Скрыто: {name}"
-ANNOUNCE_GONE = "⚠ Сессия больше не доступна"
-ANNOUNCE_FAILED = "⚠ Не удалось открыть топик — попробуйте ещё раз"
-BUTTON_OPEN = "🧵 Открыть топик"
-BUTTON_HIDE = "🙈 Скрыть"
+ANNOUNCE_OPENED = "🧵 Topic opened: {name}"
+ANNOUNCE_DIED = "⛔ Session ended: {name}"
+ANNOUNCE_HIDDEN = "🙈 Hidden: {name}"
+ANNOUNCE_GONE = "⚠ Session no longer available"
+ANNOUNCE_FAILED = "⚠ Could not open the topic — try again"
+BUTTON_OPEN = "🧵 Open topic"
+BUTTON_HIDE = "🙈 Hide"
 
 
 @dataclass(slots=True)

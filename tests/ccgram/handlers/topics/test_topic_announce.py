@@ -439,7 +439,7 @@ class TestOpen:
             )
 
         last = _edits(client)[-1]
-        assert "Не удалось открыть топик" in last["text"]
+        assert "Could not open the topic" in last["text"]
         assert last["reply_markup"] is not None
         assert topic_announce.has_announcement(WINDOW) is True
 

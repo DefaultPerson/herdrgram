@@ -36,9 +36,9 @@ from ..messaging_pipeline.message_sender import rate_limit_send_message
 logger = structlog.get_logger()
 
 BACKFILL_HEADER_PARTIAL = (
-    "⏮ В сессии {total} сообщений, пропущено {skipped} — ниже последние {shown}"
+    "⏮ {total} messages in this session, {skipped} skipped — last {shown} below"
 )
-BACKFILL_HEADER_FULL = "⏮ Загружена вся история: {total} сообщений"
+BACKFILL_HEADER_FULL = "⏮ Full history loaded: {total} messages"
 
 
 def backfill_enabled() -> bool:

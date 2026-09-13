@@ -302,17 +302,17 @@ By default, every agent session CCGram discovers becomes a Telegram topic within
 Set `CCGRAM_TOPIC_ON_DEMAND=true` and discovery posts one message to the chat's General topic instead:
 
 ```text
-🆕 Новая сессия: Claude ▸ herdrgram ▸ api
+🆕 New session: Claude ▸ herdrgram ▸ api
 📁 /home/user/projects/api
 🤖 claude
-[🧵 Открыть топик] [🙈 Скрыть]
+[🧵 Open topic] [🙈 Hide]
 ```
 
-**🧵 Открыть топик** creates the topic through the ordinary path — same random icon, same name, same binding as automatic mode, and the same replay described in [Catching Up a New Topic](#catching-up-a-new-topic). The offer is rewritten to `🧵 Топик открыт: <name>` and its buttons are removed.
+**🧵 Open topic** creates the topic through the ordinary path — same random icon, same name, same binding as automatic mode, and the same replay described in [Catching Up a New Topic](#catching-up-a-new-topic). The offer is rewritten to `🧵 Topic opened: <name>` and its buttons are removed.
 
-**🙈 Скрыть** deletes the offer and remembers the window, which is never offered again. The session is still there: `/sessions` lists it and the `/new` window picker binds it, so hiding costs you nothing but the prompt.
+**🙈 Hide** deletes the offer and remembers the window, which is never offered again. The session is still there: `/sessions` lists it and the `/new` window picker binds it, so hiding costs you nothing but the prompt.
 
-An offer is posted once per window and survives a restart, so a bot that comes back up does not re-ask. If the session dies before anyone answers, the offer becomes `⛔ Сессия завершена: <name>` and is forgotten.
+An offer is posted once per window and survives a restart, so a bot that comes back up does not re-ask. If the session dies before anyone answers, the offer becomes `⛔ Session ended: <name>` and is forgotten.
 
 ## Catching Up a New Topic
 
@@ -321,10 +321,10 @@ A topic bound to a session that has been running for a while starts empty. The m
 Set `CCGRAM_TOPIC_BACKFILL_MESSAGES=10` and every topic CCGram binds opens with a header saying what it is showing:
 
 ```text
-⏮ В сессии 137 сообщений, пропущено 127 — ниже последние 10
+⏮ 137 messages in this session, 127 skipped — last 10 below
 ```
 
-Then those ten messages in order, formatted as `/history` formats them: user turns prefixed `👤`, tool calls collapsed. A session short enough to fit reads `⏮ Загружена вся история: 7 сообщений`, and one that has said nothing yet gets no header at all — a brand-new window has no history to report.
+Then those ten messages in order, formatted as `/history` formats them: user turns prefixed `👤`, tool calls collapsed. A session short enough to fit reads `⏮ Full history loaded: 7 messages`, and one that has said nothing yet gets no header at all — a brand-new window has no history to report.
 
 This covers every path that binds a topic to a session for the first time: automatic adoption, the `/sync` repair of a deleted topic, an accepted on-demand offer, and the `/new` window picker. It deliberately does not cover resuming a session into a topic that was already showing the previous one — the dead-window recovery banner and `/resume` — because that topic already has history on screen and would show some of it twice.
 
