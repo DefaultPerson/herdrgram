@@ -38,22 +38,20 @@ import secrets
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import structlog
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
 
-from ... import session_query, window_query
+from ... import window_query
 from ...config import config
-from ...expandable_quote import EXPANDABLE_QUOTE_END, EXPANDABLE_QUOTE_START
 from ...multiplexer import multiplexer as tmux_manager
 from ...multiplexer.base import canonical_window_id
-from ...session_monitor import NewWindowEvent, get_active_monitor
+from ...session_monitor import NewWindowEvent
 from ...telegram_client import PTBTelegramClient, TelegramClient
 from ...thread_router import thread_router
 from ...utils import atomic_write_json
-from ...window_state_ports import identity_state
 from ..callback_data import CB_ANNOUNCE_HIDE, CB_ANNOUNCE_OPEN
 from ..callback_registry import register
 from ..messaging_pipeline.message_sender import (
@@ -89,11 +87,6 @@ ANNOUNCE_GONE = "⚠ Сессия больше не доступна"
 ANNOUNCE_FAILED = "⚠ Не удалось открыть топик — попробуйте ещё раз"
 BUTTON_OPEN = "🧵 Открыть топик"
 BUTTON_HIDE = "🙈 Скрыть"
-
-BACKFILL_HEADER_PARTIAL = (
-    "⏮ В сессии {total} сообщений, пропущено {skipped} — ниже последние {shown}"
-)
-BACKFILL_HEADER_FULL = "⏮ Загружена вся история: {total} сообщений"
 
 
 @dataclass(slots=True)
@@ -405,95 +398,6 @@ async def reconcile_announcements(
 # ── Opening a topic from an offer ──────────────────────────────────────────
 
 
-def _format_backfill_message(message: dict[str, Any]) -> str:
-    """Render one replayed transcript message the way ``/history`` does."""
-    text = str(message.get("text", ""))
-    text = text.replace(EXPANDABLE_QUOTE_START, "").replace(EXPANDABLE_QUOTE_END, "")
-    if message.get("role") == "user":
-        return f"👤 {text}"
-    if message.get("content_type") == "thinking":
-        return f"\U0001f9e0 Thinking…\n{text}"
-    return text
-
-
-async def _mark_live_from_eof(window_id: str) -> int | None:
-    """Declare the transcript delivered up to here, returning that offset.
-
-    The monitor may already be tracking this session — it polls every entry in
-    ``session_map.json``, bound or not — with a watermark from before the topic
-    existed. Without this the first live tick would replay everything since,
-    duplicating the backfill and tripping the queue's backlog prompt.
-    """
-    identity = identity_state.get_identity(window_id)
-    if identity is None or not identity.session_id or identity.transcript_path is None:
-        return None
-    monitor = get_active_monitor()
-    if monitor is None:
-        return None
-    return await monitor.mark_delivered_to_eof(
-        identity.session_id, identity.transcript_path
-    )
-
-
-async def _send_backfill(
-    client: TelegramClient,
-    chat_id: int,
-    thread_id: int,
-    window_id: str,
-    upto: int | None,
-) -> int:
-    """Replay the tail of the transcript into a freshly opened topic.
-
-    Returns how many transcript messages were sent. The range stops at *upto*,
-    the delivered watermark, so nothing replayed here is also delivered live.
-    """
-    limit = config.topic_backfill_messages
-    if limit <= 0:
-        return 0
-    messages, total = await session_query.get_recent_messages(window_id, end_byte=upto)
-    if total == 0:
-        # A session that has said nothing yet needs no header about how much of
-        # nothing was skipped; live delivery starts on its first line.
-        return 0
-    tail = messages[-limit:]
-    shown = len(tail)
-    skipped = total - shown
-    header = (
-        BACKFILL_HEADER_FULL.format(total=total)
-        if skipped <= 0
-        else BACKFILL_HEADER_PARTIAL.format(total=total, skipped=skipped, shown=shown)
-    )
-    # Paced like every other automated outbound. Ten messages at once is
-    # exactly the burst Telegram's per-chat limit exists to refuse.
-    await rate_limit_send_message(client, chat_id, header, message_thread_id=thread_id)
-    for message in tail:
-        await rate_limit_send_message(
-            client,
-            chat_id,
-            _format_backfill_message(message),
-            message_thread_id=thread_id,
-        )
-    return shown
-
-
-def _bound_thread_id(user_id: int, chat_id: int, window_id: str) -> int | None:
-    """Thread the just-created topic was bound to, for this user and chat."""
-    wanted = canonical_window_id(window_id)
-    for (
-        uid,
-        bound_chat,
-        thread_id,
-        bound_window,
-    ) in thread_router.iter_thread_bindings_with_chat():
-        if (
-            uid == user_id
-            and bound_chat == chat_id
-            and canonical_window_id(bound_window) == wanted
-        ):
-            return thread_id
-    return None
-
-
 async def _live_window(window_id: str) -> "TmuxWindow | None":
     """Re-read the window at the moment of the click, or None if it is gone."""
     # Lazy: importing the reconciliation seam at module load forms a cycle
@@ -567,14 +471,9 @@ async def open_topic_from_announcement(
             )
         return False
 
-    thread_id = _bound_thread_id(user_id, chat_id, window_id)
-    if thread_id is not None:
-        # Sealed before the replay is read, and with no await between the bind
-        # above and the seal, so a poll tick cannot slip in and deliver live
-        # what the replay is about to send. The replay then stops at the seal.
-        upto = await _mark_live_from_eof(window_id)
-        await _send_backfill(client, chat_id, thread_id, window_id, upto)
-
+    # The replay is not driven here: ``create_topic_in_chat`` runs it for every
+    # topic it binds, so an accepted offer and an auto-created topic get the
+    # same catch-up from the same place.
     if entry is not None:
         await _retire_announcement(client, entry, ANNOUNCE_OPENED.format(name=name))
         forget_announcement(window_id)

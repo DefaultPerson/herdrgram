@@ -342,62 +342,22 @@ class TestReconcile:
 # ── Opening a topic from an offer ──────────────────────────────────────────
 
 
-def _messages(count: int) -> list[dict]:
-    return [
-        {
-            "role": "user" if index % 2 == 0 else "assistant",
-            "text": f"message {index}",
-            "content_type": "text",
-            "timestamp": None,
-        }
-        for index in range(count)
-    ]
+def _open_seam(*, created: bool = True):
+    """Patch the seam around an accepted offer.
 
-
-class _FakeMonitor:
-    def __init__(self, offset: int | None = 4096) -> None:
-        self.offset = offset
-        self.calls: list[tuple[str, Path]] = []
-
-    async def mark_delivered_to_eof(self, session_id: str, path: Path) -> int | None:
-        self.calls.append((session_id, path))
-        return self.offset
-
-
-def _open_seam(
-    messages: list[dict],
-    total: int,
-    *,
-    monitor: _FakeMonitor | None = None,
-    thread_id: int | None = 77,
-):
-    monitor = monitor or _FakeMonitor()
-    identity = MagicMock(session_id="sess-1", transcript_path=Path("/t/sess-1.jsonl"))
-    bindings = [(USER, CHAT, thread_id, WINDOW)] if thread_id is not None else []
+    The replay itself belongs to ``topic_backfill`` and is tested there, so the
+    creation path is stubbed: these tests are about the offer's bookkeeping.
+    """
     return (
         patch(
             "ccgram.handlers.topics.topic_announce.handle_new_window",
-            AsyncMock(return_value=True),
-        ),
-        patch(
-            "ccgram.handlers.topics.topic_announce.session_query.get_recent_messages",
-            AsyncMock(return_value=(messages, total)),
-        ),
-        patch(
-            "ccgram.handlers.topics.topic_announce.identity_state.get_identity",
-            return_value=identity,
-        ),
-        patch(
-            "ccgram.handlers.topics.topic_announce.get_active_monitor",
-            return_value=monitor,
+            AsyncMock(return_value=created),
         ),
         patch("ccgram.handlers.topics.topic_announce.thread_router"),
         patch(
             "ccgram.multiplexer.reconciliation.list_windows_for_reconciliation",
             AsyncMock(return_value=[_window_ref()]),
         ),
-        monitor,
-        bindings,
     )
 
 
@@ -445,98 +405,11 @@ class TestOpen:
         assert created.kwargs["name"] == "Claude ▸ ws ▸ renamed"
 
     @pytest.mark.usefixtures("on_demand")
-    async def test_open_backfills_the_tail_and_seals_the_watermark(
-        self, client: FakeTelegramClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(topic_announce.config, "topic_backfill_messages", 10)
-        await _discover(client)
-        client.calls.clear()
-        seam = _open_seam(_messages(25), 25)
-        monitor = seam[6]
-        with seam[0], seam[1] as recent, seam[2], seam[3], seam[4] as tr, seam[5]:
-            tr.has_window.return_value = False
-            tr.iter_thread_bindings_with_chat.return_value = iter(seam[7])
-            await topic_announce.open_topic_from_announcement(
-                client, WINDOW, USER, CHAT
-            )
-
-        # The watermark is sealed before the replay is read, and the replay is
-        # bounded by it, so nothing sent here is also delivered live.
-        assert monitor.calls == [("sess-1", Path("/t/sess-1.jsonl"))]
-        assert recent.await_args is not None
-        assert recent.await_args.kwargs["end_byte"] == 4096
-
-        topic_sends = [send for send in _sends(client) if send.get("message_thread_id")]
-        assert len(topic_sends) == 11  # one header, then exactly ten messages
-        assert topic_sends[0]["text"] == (
-            "⏮ В сессии 25 сообщений, пропущено 15 — ниже последние 10"
-        )
-        assert all(send["message_thread_id"] == 77 for send in topic_sends)
-        # Chronological order, user turns prefixed the way /history prefixes them.
-        assert topic_sends[1]["text"] == "message 15"  # assistant turn
-        assert topic_sends[2]["text"] == "👤 message 16"
-        assert topic_sends[-1]["text"] == "👤 message 24"
-
-    @pytest.mark.usefixtures("on_demand")
-    async def test_a_short_session_reports_the_whole_history(
-        self, client: FakeTelegramClient
-    ) -> None:
-        await _discover(client)
-        client.calls.clear()
-        seam = _open_seam(_messages(3), 3)
-        with seam[0], seam[1], seam[2], seam[3], seam[4] as tr, seam[5]:
-            tr.has_window.return_value = False
-            tr.iter_thread_bindings_with_chat.return_value = iter(seam[7])
-            await topic_announce.open_topic_from_announcement(
-                client, WINDOW, USER, CHAT
-            )
-
-        topic_sends = [send for send in _sends(client) if send.get("message_thread_id")]
-        assert topic_sends[0]["text"] == "⏮ Загружена вся история: 3 сообщений"
-        assert len(topic_sends) == 4
-
-    @pytest.mark.usefixtures("on_demand")
-    async def test_a_silent_session_gets_no_replay_at_all(
-        self, client: FakeTelegramClient
-    ) -> None:
-        """A brand-new session has nothing to report about nothing."""
-        await _discover(client)
-        client.calls.clear()
-        seam = _open_seam([], 0)
-        with seam[0], seam[1], seam[2], seam[3], seam[4] as tr, seam[5]:
-            tr.has_window.return_value = False
-            tr.iter_thread_bindings_with_chat.return_value = iter(seam[7])
-            await topic_announce.open_topic_from_announcement(
-                client, WINDOW, USER, CHAT
-            )
-
-        assert [send for send in _sends(client) if send.get("message_thread_id")] == []
-
-    @pytest.mark.usefixtures("on_demand")
-    async def test_a_zero_backfill_limit_replays_nothing(
-        self, client: FakeTelegramClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(topic_announce.config, "topic_backfill_messages", 0)
-        await _discover(client)
-        client.calls.clear()
-        seam = _open_seam(_messages(5), 5)
-        with seam[0], seam[1] as recent, seam[2], seam[3], seam[4] as tr, seam[5]:
-            tr.has_window.return_value = False
-            tr.iter_thread_bindings_with_chat.return_value = iter(seam[7])
-            await topic_announce.open_topic_from_announcement(
-                client, WINDOW, USER, CHAT
-            )
-
-        recent.assert_not_awaited()
-        assert [send for send in _sends(client) if send.get("message_thread_id")] == []
-
-    @pytest.mark.usefixtures("on_demand")
     async def test_opening_retires_the_offer(self, client: FakeTelegramClient) -> None:
         await _discover(client)
-        seam = _open_seam(_messages(2), 2)
-        with seam[0], seam[1], seam[2], seam[3], seam[4] as tr, seam[5]:
+        seam = _open_seam()
+        with seam[0], seam[1] as tr, seam[2]:
             tr.has_window.return_value = False
-            tr.iter_thread_bindings_with_chat.return_value = iter(seam[7])
             await topic_announce.open_topic_from_announcement(
                 client, WINDOW, USER, CHAT
             )
@@ -550,15 +423,35 @@ class TestOpen:
         assert topic_announce.is_dismissed(WINDOW) is False
 
     @pytest.mark.usefixtures("on_demand")
+    async def test_a_failed_creation_keeps_the_buttons(
+        self, client: FakeTelegramClient
+    ) -> None:
+        """Flood control clears on its own; the offer must stay pressable."""
+        await _discover(client)
+        seam = _open_seam(created=False)
+        with seam[0], seam[1] as tr, seam[2]:
+            tr.has_window.return_value = False
+            assert (
+                await topic_announce.open_topic_from_announcement(
+                    client, WINDOW, USER, CHAT
+                )
+                is False
+            )
+
+        last = _edits(client)[-1]
+        assert "Не удалось открыть топик" in last["text"]
+        assert last["reply_markup"] is not None
+        assert topic_announce.has_announcement(WINDOW) is True
+
+    @pytest.mark.usefixtures("on_demand")
     async def test_a_second_press_does_not_open_a_second_topic(
         self, client: FakeTelegramClient
     ) -> None:
         """The duplicate-topic failure this whole feature exists to avoid."""
         await _discover(client)
-        seam = _open_seam(_messages(2), 2)
-        with seam[0] as created, seam[1], seam[2], seam[3], seam[4] as tr, seam[5]:
+        seam = _open_seam()
+        with seam[0] as created, seam[1] as tr, seam[2]:
             tr.has_window.return_value = True
-            tr.iter_thread_bindings_with_chat.return_value = iter(seam[7])
             assert (
                 await topic_announce.open_topic_from_announcement(
                     client, WINDOW, USER, CHAT

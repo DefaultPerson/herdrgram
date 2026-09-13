@@ -38,6 +38,7 @@ from ..callback_registry import register
 from ..messaging_pipeline.message_sender import safe_edit, safe_send
 from ..status.topic_emoji import format_topic_name_for_mode
 from ..user_state import PENDING_THREAD_ID, PENDING_THREAD_TEXT
+from .topic_backfill import backfill_new_topic
 
 if TYPE_CHECKING:
     from telegram.ext import ContextTypes
@@ -268,6 +269,16 @@ async def _handle_bind(
     await safe_edit(
         query,
         f"✅ Bound to window `{display}`",
+    )
+
+    # After provider detection, which is what tells the transcript reader how to
+    # parse this session, and before any pending text is forwarded, so the topic
+    # reads as history first and the user's own message last. Off by default.
+    await backfill_new_topic(
+        client,
+        thread_router.resolve_chat_id(user_id, thread_id),
+        thread_id,
+        selected_wid,
     )
 
     pending_text = (

@@ -38,6 +38,7 @@ from ...multiplexer.base import canonical_window_id
 from ...window_state_ports import identity_state
 from ..recovery.transcript_discovery import seed_session_from_native_id
 from ..status.topic_emoji import strip_emoji_prefix
+from .topic_backfill import backfill_new_topic
 from .topic_icons import ICON_EMOJI_KEY, note_icon_refused, pick_topic_icon
 from .topic_probe import probe_topic_exists
 
@@ -450,6 +451,10 @@ async def create_topic_in_chat(
             owner_id, topic.message_thread_id, window_id, chat_id, topic_name
         )
         clear_pending_creation(window_id)
+        # No await between the bind above and this call, so a poll tick cannot
+        # deliver live output into the new topic before the transcript is
+        # sealed. Off by default, in which case nothing is read or sent.
+        await backfill_new_topic(client, chat_id, topic.message_thread_id, window_id)
         return True
     except RetryAfter as e:
         retry_after_seconds = (

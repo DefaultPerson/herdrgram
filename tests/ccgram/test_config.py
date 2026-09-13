@@ -313,11 +313,12 @@ class TestTopicOnDemand:
         monkeypatch.setenv("CCGRAM_TOPIC_ON_DEMAND", value)
         assert Config().topic_on_demand is False
 
-    def test_backfill_default(self, monkeypatch):
+    def test_backfill_default_is_off(self, monkeypatch):
+        """Upstream shows a newly bound topic only what happens next."""
         monkeypatch.delenv("CCGRAM_TOPIC_BACKFILL_MESSAGES", raising=False)
-        assert Config().topic_backfill_messages == 10
+        assert Config().topic_backfill_messages == 0
 
-    @pytest.mark.parametrize(("value", "expected"), [("0", 0), ("3", 3), ("-5", 0)])
+    @pytest.mark.parametrize(("value", "expected"), [("0", 0), ("10", 10), ("-5", 0)])
     def test_backfill_override_and_clamp(self, monkeypatch, value, expected):
         monkeypatch.setenv("CCGRAM_TOPIC_BACKFILL_MESSAGES", value)
         assert Config().topic_backfill_messages == expected

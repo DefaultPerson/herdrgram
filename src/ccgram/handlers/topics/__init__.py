@@ -33,6 +33,7 @@ from .directory_browser import (
 )
 from .directory_callbacks import handle_directory_callback
 from .new_command import new_command
+from .topic_backfill import backfill_enabled, backfill_new_topic
 from .topic_announce import (
     announce_new_window,
     handle_announce_callback,
@@ -68,6 +69,8 @@ __all__ = [
     "UNBOUND_WINDOWS_KEY",
     "adopt_unbound_windows",
     "announce_new_window",
+    "backfill_enabled",
+    "backfill_new_topic",
     "build_directory_browser",
     "build_mode_picker",
     "build_provider_picker",

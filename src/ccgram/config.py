@@ -313,10 +313,12 @@ class Config:
             "true",
             "yes",
         )
-        # How many transcript messages a topic opened from an offer replays
-        # before live delivery takes over. 0 disables the replay.
+        # How many transcript messages a newly bound topic replays before live
+        # delivery takes over. Upstream replays nothing — a topic bound to a
+        # session that has been running for a while starts empty and only shows
+        # what happens next — so 0 is the default and turns the feature off.
         self.topic_backfill_messages: int = max(
-            0, _parse_int_env("CCGRAM_TOPIC_BACKFILL_MESSAGES", 10)
+            0, _parse_int_env("CCGRAM_TOPIC_BACKFILL_MESSAGES", 0)
         )
         # herdr reports a starting agent before it can name that agent's
         # session, and names it a few seconds later; the adapter mints a

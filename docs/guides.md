@@ -243,7 +243,7 @@ All settings accept both CLI flags and environment variables. CLI flags take pre
 | `CCGRAM_TOPIC_NAME_DECORATIONS`                      | `true`                         | Set `false` for plain topic names: no status emoji, no RC/YOLO badge, no rename on a state change    |
 | `CCGRAM_TOPIC_RANDOM_ICON`                           | `false`                        | Set `true` to give every topic CCGram creates a random forum icon and colour                         |
 | `CCGRAM_TOPIC_ON_DEMAND`                             | `false`                        | Set `true` to offer a topic in General for each new session instead of creating one outright        |
-| `CCGRAM_TOPIC_BACKFILL_MESSAGES`                     | `10`                           | Messages replayed into a topic opened from an offer; `0` replays none                                |
+| `CCGRAM_TOPIC_BACKFILL_MESSAGES`                     | `0`                            | Messages replayed into any newly bound topic; `0` (upstream) replays none                            |
 | `CCGRAM_HERDR_REQUIRE_NATIVE_SESSION`                | `false`                        | Set `true` to wait for herdr to name an agent's session before adopting or offering it               |
 | `CCGRAM_MUX_RENAME_FROM_TELEGRAM`                    | `true`                         | Set `false` to stop a Telegram topic rename from renaming the multiplexer window (herdr: the tab)    |
 | `CCGRAM_HERDR_TOPIC_LABEL`                           | `full`                         | herdr topic label: `full` (provider/workspace/tab/pane) or `tab` (the herdr tab label alone)         |
@@ -307,25 +307,29 @@ Set `CCGRAM_TOPIC_ON_DEMAND=true` and discovery posts one message to the chat's 
 [🧵 Открыть топик] [🙈 Скрыть]
 ```
 
-**🧵 Открыть топик** creates the topic through the ordinary path — same random icon, same name, same binding as automatic mode — and then replays the tail of the session into it, so a topic opened an hour in does not start mid-sentence. The offer is rewritten to `🧵 Топик открыт: <name>` and its buttons are removed.
+**🧵 Открыть топик** creates the topic through the ordinary path — same random icon, same name, same binding as automatic mode, and the same replay described in [Catching Up a New Topic](#catching-up-a-new-topic). The offer is rewritten to `🧵 Топик открыт: <name>` and its buttons are removed.
 
 **🙈 Скрыть** deletes the offer and remembers the window, which is never offered again. The session is still there: `/sessions` lists it and the `/new` window picker binds it, so hiding costs you nothing but the prompt.
 
 An offer is posted once per window and survives a restart, so a bot that comes back up does not re-ask. If the session dies before anyone answers, the offer becomes `⛔ Сессия завершена: <name>` and is forgotten.
 
-### The Replay
+## Catching Up a New Topic
 
-The topic opens with a header saying what it is showing:
+A topic bound to a session that has been running for a while starts empty. The monitor delivers what happens next, and everything said before the binding is reachable only through `/history`. That is fine for a window CCGram just created and unhelpful for every other case: an adopted session, a topic recreated after you deleted it, a window picked out of `/new`.
+
+Set `CCGRAM_TOPIC_BACKFILL_MESSAGES=10` and every topic CCGram binds opens with a header saying what it is showing:
 
 ```text
 ⏮ В сессии 137 сообщений, пропущено 127 — ниже последние 10
 ```
 
-Then those ten messages in order, formatted as `/history` formats them: user turns prefixed `👤`, tool calls collapsed. A session short enough to fit reads `⏮ Загружена вся история: 7 сообщений`, and one that has said nothing yet gets no header at all.
+Then those ten messages in order, formatted as `/history` formats them: user turns prefixed `👤`, tool calls collapsed. A session short enough to fit reads `⏮ Загружена вся история: 7 сообщений`, and one that has said nothing yet gets no header at all — a brand-new window has no history to report.
 
-`CCGRAM_TOPIC_BACKFILL_MESSAGES` sets the count; `0` turns the replay off and opens a bare topic.
+This covers every path that binds a topic to a session for the first time: automatic adoption, the `/sync` repair of a deleted topic, an accepted on-demand offer, and the `/new` window picker. It deliberately does not cover resuming a session into a topic that was already showing the previous one — the dead-window recovery banner and `/resume` — because that topic already has history on screen and would show some of it twice.
 
-Live delivery resumes from the end of the transcript as it stood when the topic opened, so nothing in the replay is sent twice and the queue's "jump to live" prompt never fires for the catch-up.
+Before reading anything, CCGram marks the transcript as delivered up to its current end, and the replay stops at that same point. Live delivery therefore resumes exactly where the replay left off: nothing is sent twice, and the queue's "jump to live" prompt never fires for the catch-up. The messages are paced like all automated output, so ten of them take about ten seconds to land.
+
+`0`, the default, is the upstream behaviour and reads nothing at all.
 
 ## Waiting for a Named Session
 
