@@ -32,7 +32,7 @@ TARGET = "herdr-session-v1-" + "a" * 64
 OTHER_TARGET = "herdr-session-v1-" + "b" * 64
 SESSION = "ab8bdbd8-238e-4b50-b0a0-c22fa2adc83c"
 OLD_SESSION = "93e6078b-9fd7-4499-8e32-ca252aa7c945"
-CWD = "~/projects/dca-services"
+CWD = "/home/user/projects/api"
 
 
 @pytest.fixture
@@ -65,7 +65,7 @@ def _herdr_window(
 ) -> WindowRef:
     return WindowRef(
         window_id=window_id,
-        window_name="Claude ▸ dca ▸ t2 ▸ p2",
+        window_name="Claude ▸ api ▸ t2 ▸ p2",
         cwd=cwd,
         pane_current_command="claude",
         native_session_id=native_session_id,
@@ -76,7 +76,7 @@ def _herdr_window(
 def _tmux_window() -> WindowRef:
     """What tmux reports: a pane, with nothing said about the agent inside it."""
     return WindowRef(
-        window_id="@4", window_name="dca", cwd=CWD, pane_current_command="claude"
+        window_id="@4", window_name="api", cwd=CWD, pane_current_command="claude"
     )
 
 

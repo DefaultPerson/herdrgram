@@ -245,7 +245,7 @@ def _finished_turn_pane() -> str:
         f"{_SEPARATOR}\n"
         "❯ ok, waiting on the report\n"
         f"{_SEPARATOR}\n"
-        "  ▌ dca-services › main › Opus 5 › high\n"
+        "  ▌ api › main › Opus 5 › high\n"
     )
 
 

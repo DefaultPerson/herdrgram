@@ -19,7 +19,7 @@ The planning history behind it:
 
 ## Running the test stand (2026-09-13)
 
-- **Config**: `~/.ccgram/.env` — the test bot token (`@your_bot`), `CCGRAM_MULTIPLEXER=herdr`, the patch flags enabled, `AUTOCLOSE_DONE_MINUTES=0`, `AUTOCLOSE_DEAD_MINUTES=2`.
+- **Config**: `~/.ccgram/.env` — the token for a bot of your own (`<your bot>`, a dedicated test bot rather than the one your main install polls; two pollers on one token trade 409s on `getUpdates`), `CCGRAM_MULTIPLEXER=herdr`, the patch flags enabled, `AUTOCLOSE_DONE_MINUTES=0`, `AUTOCLOSE_DEAD_MINUTES=2`.
 - **Claude Code hooks**: `uv run ccgram hook --install` has already been run — nine events installed alongside the herdr hook. Check with `uv run ccgram doctor`, undo with `uv run ccgram hook --uninstall`.
 - **Process**: the systemd user unit `~/.config/systemd/user/ccgram.service` (`ExecStart=.venv/bin/ccgram`, `WorkingDirectory=` this repo, `Restart=on-failure`). Use `systemctl --user status|restart|stop ccgram`, and `journalctl --user -u ccgram -f -o cat` for logs. After changing code: `systemctl --user restart ccgram`.
 - **Hiding a session from the bot**: `herdr tab rename <tab_id> __name__`. Bring it back with `herdr tab rename <tab_id> name`.

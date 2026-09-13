@@ -234,7 +234,7 @@ def sample_pane_completed_turn():
         f"{sep}\n"
         "❯ ok, waiting on the report\n"
         f"{sep}\n"
-        "  ▌ dca-services › main › Opus 5 › high\n"
+        "  ▌ api › main › Opus 5 › high\n"
         "  ⏵⏵ bypass permissions on · 1 shell · ← for agents\n"
     )
 
@@ -258,7 +258,7 @@ def sample_pane_update_banner():
         f"{sep}\n"
         "❯\n"
         f"{sep}\n"
-        "  ▌ dca-services › main › Opus 5 › high\n"
+        "  ▌ api › main › Opus 5 › high\n"
         "  ⏵⏵ bypass permissions on · 1 shell · ← for agents\n"
     )
 
@@ -275,7 +275,7 @@ def sample_pane_working_turn():
         f"{sep}\n"
         "❯ \n"
         f"{sep}\n"
-        "  ▌ dca-services › main › Opus 5 › high\n"
+        "  ▌ api › main › Opus 5 › high\n"
     )
 
 
