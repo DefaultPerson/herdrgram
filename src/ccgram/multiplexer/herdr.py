@@ -697,10 +697,19 @@ class HerdrManager:
         fallback composite is a stand-in identity this adapter minted for a
         session Herdr could not name, so publishing its value would send a
         caller looking for a transcript that was never written under it.
+
+        ``CCGRAM_HERDR_REQUIRE_NATIVE_SESSION`` withholds that stand-in from
+        adoption. Herdr publishes a sessionless record for a starting agent and
+        the named session seconds later, and the two carry different targets,
+        so adopting the first costs a topic that dies as soon as the second
+        arrives. Eligibility is the only verdict that changes: the record keeps
+        its target and stays in the complete listing, so liveness, cleanup and
+        every already-bound topic are untouched.
         """
         native_session_id = (
             record.composite.value if record.composite.kind == "id" else ""
         )
+        named_session = record.composite.kind == "id"
         return WindowRef(
             window_id=record.target_id,
             window_name=label,
@@ -708,7 +717,8 @@ class HerdrManager:
             pane_current_command=record.composite.agent,
             topic_eligible=adoptable
             and is_herdr_session_target(record.target_id)
-            and bool(record.composite.agent.strip()),
+            and bool(record.composite.agent.strip())
+            and (named_session or not config.herdr_require_native_session),
             native_session_id=native_session_id,
             native_agent=record.composite.agent if native_session_id else "",
         )

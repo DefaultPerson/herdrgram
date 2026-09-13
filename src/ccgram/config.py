@@ -293,6 +293,42 @@ class Config:
             if raw_topic_label in (TOPIC_LABEL_FULL, TOPIC_LABEL_TAB)
             else TOPIC_LABEL_FULL
         )
+        self._init_topic_on_demand()
+
+    def _init_topic_on_demand(self) -> None:
+        """Whether a discovered session gets a topic or an offer of one.
+
+        All three default to the upstream behaviour: every eligible window
+        discovered without a binding is adopted immediately, and a herdr record
+        is eligible whether or not herdr has named its agent session yet.
+        """
+        # Upstream creates a topic the moment discovery finds an unbound
+        # eligible window. CCGRAM_TOPIC_ON_DEMAND=true posts one offer to the
+        # General topic instead and creates the topic only when it is accepted,
+        # so a chat does not fill with topics nobody asked for.
+        self.topic_on_demand: bool = os.getenv(
+            "CCGRAM_TOPIC_ON_DEMAND", ""
+        ).lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        # How many transcript messages a topic opened from an offer replays
+        # before live delivery takes over. 0 disables the replay.
+        self.topic_backfill_messages: int = max(
+            0, _parse_int_env("CCGRAM_TOPIC_BACKFILL_MESSAGES", 10)
+        )
+        # herdr reports a starting agent before it can name that agent's
+        # session, and names it a few seconds later; the adapter mints a
+        # terminal-derived stand-in identity for the gap so a hook-capable
+        # agent stays addressable. Adopting that stand-in costs a second topic
+        # when the named identity arrives, because the two carry different
+        # targets. CCGRAM_HERDR_REQUIRE_NATIVE_SESSION=true withholds the
+        # stand-in from discovery; it stays in the complete listing, so
+        # liveness and cleanup still see it.
+        self.herdr_require_native_session: bool = os.getenv(
+            "CCGRAM_HERDR_REQUIRE_NATIVE_SESSION", ""
+        ).lower() in ("1", "true", "yes")
 
     def _init_lifecycle(self) -> None:
         self.autoclose_done_minutes: int = int(

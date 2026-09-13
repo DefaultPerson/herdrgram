@@ -33,6 +33,12 @@ from .directory_browser import (
 )
 from .directory_callbacks import handle_directory_callback
 from .new_command import new_command
+from .topic_announce import (
+    announce_new_window,
+    handle_announce_callback,
+    open_topic_from_announcement,
+    reconcile_announcements,
+)
 from .topic_lifecycle import (
     check_autoclose_timers,
     check_unbound_window_ttl,
@@ -61,6 +67,7 @@ __all__ = [
     "STATE_SELECTING_WINDOW",
     "UNBOUND_WINDOWS_KEY",
     "adopt_unbound_windows",
+    "announce_new_window",
     "build_directory_browser",
     "build_mode_picker",
     "build_provider_picker",
@@ -76,13 +83,16 @@ __all__ = [
     "collect_target_chats",
     "create_topic_in_chat",
     "get_favorites",
+    "handle_announce_callback",
     "handle_directory_callback",
     "handle_new_window",
     "still_adoptable",
     "handle_window_callback",
     "new_command",
+    "open_topic_from_announcement",
     "probe_topic_existence",
     "prune_stale_state",
+    "reconcile_announcements",
     "topic_closed_handler",
     "topic_edited_handler",
 ]

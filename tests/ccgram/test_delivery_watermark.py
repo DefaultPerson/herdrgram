@@ -225,3 +225,73 @@ def test_settled_prefix_before_failure_commits(tmp_path):
 
     assert tracked.last_byte_offset == 50
     assert monitor._delivery_receipts["s1"] == [failed]
+
+
+async def test_mark_delivered_to_eof_seals_a_transcript(tmp_path):
+    """A topic opened mid-session starts live delivery at the current end.
+
+    Everything already written belongs to the topic's own catch-up, so the
+    monitor must deliver the next line and nothing before it.
+    """
+    from ccgram.session_monitor import SessionMonitor
+
+    transcript = tmp_path / "s1.jsonl"
+    transcript.write_text(_entry("first") + _entry("second"))
+    size = transcript.stat().st_size
+
+    monitor = SessionMonitor(projects_path=tmp_path, state_file=tmp_path / "ms.json")
+    offset = await monitor.mark_delivered_to_eof("s1", transcript)
+
+    assert offset == size
+    tracked = monitor.state.get_session("s1")
+    assert tracked is not None
+    assert tracked.last_byte_offset == size
+    assert tracked.parsed_offset == size
+    assert (
+        json.loads((tmp_path / "ms.json").read_text())["tracked_sessions"]["s1"][
+            "last_byte_offset"
+        ]
+        == size
+    )
+
+    current_map = {"w1": {"session_id": "s1", "transcript_path": str(transcript)}}
+    assert await monitor.check_for_updates(current_map) == []
+
+    with transcript.open("a", encoding="utf-8") as handle:
+        handle.write(_entry("third"))
+
+    assert [m.text for m in await monitor.check_for_updates(current_map)] == ["third"]
+
+
+async def test_mark_delivered_to_eof_rewinds_no_watermark_it_cannot_read(tmp_path):
+    from ccgram.session_monitor import SessionMonitor
+
+    monitor = SessionMonitor(projects_path=tmp_path, state_file=tmp_path / "ms.json")
+    monitor.state.tracked_sessions["s1"] = TrackedSession(
+        session_id="s1", file_path="/gone.jsonl", last_byte_offset=99
+    )
+
+    assert await monitor.mark_delivered_to_eof("s1", tmp_path / "gone.jsonl") is None
+    assert monitor.state.tracked_sessions["s1"].last_byte_offset == 99
+
+
+async def test_mark_delivered_to_eof_drops_receipts_that_would_rewind_it(tmp_path):
+    """A receipt settled after the seal must not commit its older checkpoint."""
+    from ccgram.session_monitor import SessionMonitor
+
+    transcript = tmp_path / "s1.jsonl"
+    transcript.write_text(_entry("first"))
+
+    monitor = SessionMonitor(projects_path=tmp_path, state_file=tmp_path / "ms.json")
+    stale = DeliveryReceipt(checkpoint=0)
+    stale.track()
+    monitor._delivery_receipts["s1"] = [stale]
+
+    await monitor.mark_delivered_to_eof("s1", transcript)
+    stale.settle(DeliveryOutcome.DELIVERED)
+    stale.close()
+    monitor.commit_delivered_watermarks()
+
+    tracked = monitor.state.get_session("s1")
+    assert tracked is not None
+    assert tracked.last_byte_offset == transcript.stat().st_size

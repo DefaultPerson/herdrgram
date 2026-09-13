@@ -637,6 +637,21 @@ async def _handle_new_window_locked(
     ):
         return True
 
+    if target_user_id is None and target_chat_id is None:
+        # Automatic discovery only. An explicit bind — the /sync repair of a
+        # deleted topic, or an accepted offer, which names both a user and a
+        # chat — still creates the topic outright, so the offer has something
+        # to call and cannot recurse into itself. The flag is read inside
+        # topic_announce so this branch costs nothing but one attribute read
+        # while it is off.
+        # Lazy: topic_announce calls back into this module for the creation
+        # path it defers to; importing it here at module load closes that cycle.
+        from . import topic_announce
+
+        if topic_announce.on_demand_enabled():
+            await topic_announce.announce_new_window(client, event, topic_name)
+            return False
+
     seen_chats = (
         {target_chat_id}
         if target_chat_id is not None

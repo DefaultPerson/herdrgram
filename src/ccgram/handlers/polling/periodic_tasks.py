@@ -17,6 +17,7 @@ from ...config import config
 from ...telegram_client import TelegramClient
 from ...utils import log_throttle_sweep
 from ..live.live_view import tick_live_views
+from ..topics.topic_announce import reconcile_announcements
 from ..topics.topic_lifecycle import (
     check_autoclose_timers,
     check_unbound_window_ttl,
@@ -59,6 +60,12 @@ async def run_periodic_tasks(
 async def run_lifecycle_tasks(
     client: TelegramClient, all_windows: list["TmuxWindow"]
 ) -> None:
-    """Run per-tick lifecycle tasks (autoclose timers, unbound window TTL)."""
+    """Run per-tick lifecycle tasks (autoclose timers, unbound window TTL).
+
+    ``all_windows`` is the confirmed complete listing — the caller skips the
+    tick when the backend could not answer — so an unanswered topic offer whose
+    window is absent from it really is gone, not merely unreported.
+    """
     await check_autoclose_timers(client)
     await check_unbound_window_ttl(all_windows)
+    await reconcile_announcements(client, all_windows)

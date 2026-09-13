@@ -125,6 +125,10 @@ _SINGLETON_ALLOWLIST = frozenset(
         # provider_mode_callbacks uses thread_router for the double-click guard
         # (same routing pattern as directory_callbacks).
         "topics/provider_mode_callbacks.py",
+        # topic_announce reads thread_router to find the thread its accepted
+        # offer was just bound to, so the backfill lands in the new topic —
+        # the same routing pattern as topic_orchestration, which owns the bind.
+        "topics/topic_announce.py",
         "topics/topic_lifecycle.py",
         "topics/topic_orchestration.py",
         "topics/window_callbacks.py",

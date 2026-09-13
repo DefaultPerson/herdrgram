@@ -251,6 +251,44 @@ async def test_sessionless_snapshot_uses_terminal_fallback() -> None:
     assert live_window.alias_window_ids == ()
 
 
+async def test_sessionless_record_is_adoptable_by_default() -> None:
+    """Upstream behaviour: the terminal fallback may become a topic."""
+    window = (await _manager(_live_fake(_sessionless())).list_windows())[0]
+
+    assert window.window_id == _sessionless_target("term-a")
+    assert window.topic_eligible is True
+
+
+async def test_require_native_session_withholds_the_terminal_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stand-in identity stops being adoptable, and only that."""
+    monkeypatch.setattr(herdr_module.config, "herdr_require_native_session", True)
+    manager = _manager(_live_fake(_sessionless()))
+
+    assert await manager.list_windows() == []
+
+    complete = await manager.list_windows_for_reconciliation()
+    assert complete is not None
+    assert [w.window_id for w in complete] == [_sessionless_target("term-a")]
+    assert complete[0].topic_eligible is False
+
+    found = await manager.find_window_by_id(_sessionless_target("term-a"))
+    assert found is not None
+    assert found.topic_eligible is False
+
+
+async def test_require_native_session_keeps_named_sessions_eligible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(herdr_module.config, "herdr_require_native_session", True)
+    window = (await _manager(_live_fake(_agent(value="session-a"))).list_windows())[0]
+
+    assert window.window_id == _target("session-a")
+    assert window.topic_eligible is True
+    assert window.native_session_id == "session-a"
+
+
 async def test_sessionless_pi_waits_for_durable_identity() -> None:
     startup_record = {
         "terminal_id": "term-a",

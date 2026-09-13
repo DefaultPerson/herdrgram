@@ -242,6 +242,9 @@ All settings accept both CLI flags and environment variables. CLI flags take pre
 | `CCGRAM_HERDR_NOTIFY_ON_INJECT`                      | `false`                        | Set `true` to raise a silent desktop notification when a Telegram message lands in a pane (herdr)    |
 | `CCGRAM_TOPIC_NAME_DECORATIONS`                      | `true`                         | Set `false` for plain topic names: no status emoji, no RC/YOLO badge, no rename on a state change    |
 | `CCGRAM_TOPIC_RANDOM_ICON`                           | `false`                        | Set `true` to give every topic CCGram creates a random forum icon and colour                         |
+| `CCGRAM_TOPIC_ON_DEMAND`                             | `false`                        | Set `true` to offer a topic in General for each new session instead of creating one outright        |
+| `CCGRAM_TOPIC_BACKFILL_MESSAGES`                     | `10`                           | Messages replayed into a topic opened from an offer; `0` replays none                                |
+| `CCGRAM_HERDR_REQUIRE_NATIVE_SESSION`                | `false`                        | Set `true` to wait for herdr to name an agent's session before adopting or offering it               |
 | `CCGRAM_MUX_RENAME_FROM_TELEGRAM`                    | `true`                         | Set `false` to stop a Telegram topic rename from renaming the multiplexer window (herdr: the tab)    |
 | `CCGRAM_HERDR_TOPIC_LABEL`                           | `full`                         | herdr topic label: `full` (provider/workspace/tab/pane) or `tab` (the herdr tab label alone)         |
 | `CCGRAM_VOICE_AUTOSEND`                              | `false`                        | Set `true` to send voice transcriptions without confirmation; transcription is still shown           |
@@ -290,6 +293,47 @@ Every topic CCGram creates carries Telegram's default icon, so a chat with a doz
 Set `CCGRAM_TOPIC_RANDOM_ICON=true` and each topic CCGram creates gets a random icon from `getForumTopicIconStickers` — the emoji set every bot may use — plus one of the six `icon_color` values Telegram accepts. The sticker list is fetched once per process, and each chat prefers an icon it has not spent yet, so neighbouring topics rarely look alike; once every icon is taken, repeats resume.
 
 The icon is decoration and never costs a topic. If the icon list cannot be fetched, or the chat refuses a custom icon — a private-chat forum may — the topic is created with the random colour alone, and that chat is not offered a custom icon again for the rest of the run. Topics you create by hand in Telegram keep whatever icon you picked; this flag only governs the ones CCGram creates.
+
+## Topics On Demand
+
+By default, every agent session CCGram discovers becomes a Telegram topic within a poll cycle. Start six agents in the terminal and six topics appear, whether or not you meant to drive any of them from your phone.
+
+Set `CCGRAM_TOPIC_ON_DEMAND=true` and discovery posts one message to the chat's General topic instead:
+
+```text
+🆕 Новая сессия: Claude ▸ herdrgram ▸ api
+📁 /home/user/projects/api
+🤖 claude
+[🧵 Открыть топик] [🙈 Скрыть]
+```
+
+**🧵 Открыть топик** creates the topic through the ordinary path — same random icon, same name, same binding as automatic mode — and then replays the tail of the session into it, so a topic opened an hour in does not start mid-sentence. The offer is rewritten to `🧵 Топик открыт: <name>` and its buttons are removed.
+
+**🙈 Скрыть** deletes the offer and remembers the window, which is never offered again. The session is still there: `/sessions` lists it and the `/new` window picker binds it, so hiding costs you nothing but the prompt.
+
+An offer is posted once per window and survives a restart, so a bot that comes back up does not re-ask. If the session dies before anyone answers, the offer becomes `⛔ Сессия завершена: <name>` and is forgotten.
+
+### The Replay
+
+The topic opens with a header saying what it is showing:
+
+```text
+⏮ В сессии 137 сообщений, пропущено 127 — ниже последние 10
+```
+
+Then those ten messages in order, formatted as `/history` formats them: user turns prefixed `👤`, tool calls collapsed. A session short enough to fit reads `⏮ Загружена вся история: 7 сообщений`, and one that has said nothing yet gets no header at all.
+
+`CCGRAM_TOPIC_BACKFILL_MESSAGES` sets the count; `0` turns the replay off and opens a bare topic.
+
+Live delivery resumes from the end of the transcript as it stood when the topic opened, so nothing in the replay is sent twice and the queue's "jump to live" prompt never fires for the catch-up.
+
+## Waiting for a Named Session
+
+On herdr, a starting agent is reported before herdr can name the session it is running. CCGram mints a stand-in identity from the terminal so the agent is addressable in that gap — but the stand-in and the named session are different targets, so a topic adopted during the gap is abandoned seconds later when the real identity arrives, and a second topic is created beside it.
+
+Set `CCGRAM_HERDR_REQUIRE_NATIVE_SESSION=true` and the stand-in is not adopted or offered; discovery waits for the named session. Only adoption changes. The record stays in the listing CCGram reconciles liveness against, so an already-bound topic is never mistaken for dead, and a window bound before the flag was turned on keeps working.
+
+The cost is a few seconds' delay before a brand-new session surfaces. The flag is most useful together with `CCGRAM_TOPIC_ON_DEMAND`, where the two-topic race is otherwise two offers.
 
 ## One-Way Name Sync
 

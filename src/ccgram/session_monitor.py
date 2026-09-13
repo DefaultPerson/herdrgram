@@ -460,6 +460,27 @@ class SessionMonitor:
             else:
                 self._delivery_receipts.pop(session_id, None)
 
+    async def mark_delivered_to_eof(
+        self, session_id: str, file_path: Path
+    ) -> int | None:
+        """Declare a transcript delivered up to its current end, durably.
+
+        For a topic that starts mid-session: whatever is on disk now belongs to
+        the topic's own catch-up, not to live delivery, so the next tick must
+        resume from here. Receipts registered before this call are dropped with
+        it — settling one afterwards would commit its older checkpoint and pull
+        the watermark back down.
+
+        Returns the offset the watermark moved to, or ``None`` if the
+        transcript could not be read, in which case nothing changed.
+        """
+        offset = await self._transcript_reader.seek_to_eof(session_id, file_path)
+        if offset is None:
+            return None
+        self._discard_session_delivery_state(session_id)
+        self.state.save_if_dirty()
+        return offset
+
     def _reserve_replay_start(
         self, window_id: str, session_id: str, path: Path
     ) -> bool:

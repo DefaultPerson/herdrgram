@@ -508,6 +508,54 @@ class TranscriptReader:
             return tracked
         return None
 
+    async def seek_to_eof(self, session_id: str, file_path: Path) -> int | None:
+        """Treat every byte a transcript holds right now as already delivered.
+
+        The same seed a first sighting gets (``_process_session_file`` starts an
+        untracked session at EOF), applied to a session that may already be
+        tracked from before a topic existed for it. Both offsets move, so no
+        parsed-but-unsent range survives to be committed behind this call, and
+        every generation cache is re-primed at the new position — leaving a
+        stale prefix or marker behind would read as a replaced transcript on the
+        next tick and rewind the parse position.
+
+        Returns the offset the watermark moved to, or ``None`` when the file
+        could not be stat'd, in which case nothing was changed.
+        """
+        try:
+            st = file_path.stat()
+        except OSError:
+            return None
+        self._state.cancel_skip(session_id)
+        self._state.update_session(
+            TrackedSession(
+                session_id=session_id,
+                file_path=str(file_path),
+                last_byte_offset=st.st_size,
+                parsed_offset=st.st_size,
+            )
+        )
+        self._pending_tools.pop(session_id, None)
+        self._startup_file_boundaries.pop(session_id, None)
+        self._file_mtimes[session_id] = st.st_mtime
+        self._file_generations[session_id] = (st.st_dev, st.st_ino)
+        self._file_ctimes[session_id] = st.st_ctime_ns
+        self._file_sizes[session_id] = st.st_size
+        self._file_prefixes[session_id] = (
+            st.st_size,
+            await asyncio.to_thread(_prefix_digest, file_path, st.st_size),
+        )
+        try:
+            marker = await asyncio.to_thread(_tail_marker, file_path, st.st_size)
+        except OSError:
+            self._file_markers.pop(session_id, None)
+        else:
+            self._file_markers[session_id] = (st.st_size, marker)
+        logger.debug(
+            "Sealed transcript as delivered at %d bytes: %s", st.st_size, session_id
+        )
+        return st.st_size
+
     @staticmethod
     def _parse_pos(session: TrackedSession) -> int:
         """Current parse position (parsed_offset once set, watermark before)."""

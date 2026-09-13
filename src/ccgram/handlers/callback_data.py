@@ -145,5 +145,11 @@ CB_SEND_CANCEL = "sf:x"  # cancel /send browser
 CB_AGENT_SET = "ag:set:"  # ag:set:<window_id>:<provider_or_auto>
 CB_AGENT_CANCEL = "ag:x:"  # ag:x:<window_id>
 
+# On-demand topic offer posted to General (CCGRAM_TOPIC_ON_DEMAND).
+# The suffix is a short announcement token, never a window id: herdr targets
+# are 81 bytes and Telegram allows 64. topic_announce owns the token map.
+CB_ANNOUNCE_OPEN = "an:open:"  # an:open:<token> — create and bind the topic
+CB_ANNOUNCE_HIDE = "an:hide:"  # an:hide:<token> — dismiss, never offer again
+
 # Idle status sentinel (shared between status_polling and message_queue)
 IDLE_STATUS_TEXT = "\u2713 Ready"

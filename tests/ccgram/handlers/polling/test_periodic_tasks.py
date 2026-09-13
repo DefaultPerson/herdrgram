@@ -28,6 +28,9 @@ def _tasks(now: float):
         patch(_MODULE + "check_autoclose_timers", new_callable=AsyncMock) as autoclose,
         patch(_MODULE + "check_unbound_window_ttl", new_callable=AsyncMock) as unbound,
         patch(_MODULE + "log_throttle_sweep") as sweep,
+        patch(
+            _MODULE + "reconcile_announcements", new_callable=AsyncMock
+        ) as announcements,
     ):
         mock_time.monotonic.return_value = now
         mock_config.live_view_interval = _LIVE_VIEW_INTERVAL
@@ -38,6 +41,7 @@ def _tasks(now: float):
             autoclose=autoclose,
             unbound=unbound,
             sweep=sweep,
+            announcements=announcements,
         )
 
 
@@ -96,3 +100,12 @@ class TestRunLifecycleTasks:
 
         tasks.autoclose.assert_awaited_once_with(client)
         tasks.unbound.assert_awaited_once_with(windows)
+
+    async def test_retires_offers_whose_window_left_the_listing(self):
+        """The confirmed complete listing is what an offer's liveness is read from."""
+        client = MagicMock()
+        windows = cast(list[WindowRef], [MagicMock()])
+        with _tasks(now=0.0) as tasks:
+            await run_lifecycle_tasks(client, windows)
+
+        tasks.announcements.assert_awaited_once_with(client, windows)

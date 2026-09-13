@@ -297,6 +297,56 @@ class TestHerdrTopicLabel:
 
 
 @pytest.mark.usefixtures("_base_env")
+class TestTopicOnDemand:
+    def test_on_demand_default_false(self, monkeypatch):
+        """Upstream adopts an unbound eligible window the moment it sees it."""
+        monkeypatch.delenv("CCGRAM_TOPIC_ON_DEMAND", raising=False)
+        assert Config().topic_on_demand is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "True", "YES"])
+    def test_on_demand_enabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_TOPIC_ON_DEMAND", value)
+        assert Config().topic_on_demand is True
+
+    @pytest.mark.parametrize("value", ["", "0", "false", "no", "off"])
+    def test_on_demand_disabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_TOPIC_ON_DEMAND", value)
+        assert Config().topic_on_demand is False
+
+    def test_backfill_default(self, monkeypatch):
+        monkeypatch.delenv("CCGRAM_TOPIC_BACKFILL_MESSAGES", raising=False)
+        assert Config().topic_backfill_messages == 10
+
+    @pytest.mark.parametrize(("value", "expected"), [("0", 0), ("3", 3), ("-5", 0)])
+    def test_backfill_override_and_clamp(self, monkeypatch, value, expected):
+        monkeypatch.setenv("CCGRAM_TOPIC_BACKFILL_MESSAGES", value)
+        assert Config().topic_backfill_messages == expected
+
+    def test_backfill_invalid_raises(self, monkeypatch):
+        monkeypatch.setenv("CCGRAM_TOPIC_BACKFILL_MESSAGES", "ten")
+        with pytest.raises(ValueError, match="CCGRAM_TOPIC_BACKFILL_MESSAGES"):
+            Config()
+
+
+@pytest.mark.usefixtures("_base_env")
+class TestHerdrRequireNativeSession:
+    def test_default_false(self, monkeypatch):
+        """Upstream adopts herdr's terminal fallback like any other record."""
+        monkeypatch.delenv("CCGRAM_HERDR_REQUIRE_NATIVE_SESSION", raising=False)
+        assert Config().herdr_require_native_session is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "True", "YES"])
+    def test_enabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_HERDR_REQUIRE_NATIVE_SESSION", value)
+        assert Config().herdr_require_native_session is True
+
+    @pytest.mark.parametrize("value", ["", "0", "false", "no"])
+    def test_disabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_HERDR_REQUIRE_NATIVE_SESSION", value)
+        assert Config().herdr_require_native_session is False
+
+
+@pytest.mark.usefixtures("_base_env")
 class TestStatusMode:
     def test_default_is_system(self, monkeypatch):
         monkeypatch.delenv("CCGRAM_STATUS_MODE", raising=False)
