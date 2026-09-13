@@ -218,5 +218,43 @@ def sample_pane_status_line():
 
 
 @pytest.fixture
+def sample_pane_completed_turn():
+    """The screen Claude Code >= 2.1 leaves once a turn has finished.
+
+    Shape captured live from a herdr pane whose native agent status was
+    ``idle``: the finished-turn line keeps the spinner glyph, which is what
+    made the status poll read a finished session as permanently busy.
+    """
+    sep = "─" * 90
+    return (
+        "  Отдельно: watcher первого события ещё висит.\n"
+        "\n"
+        "✻ Sautéed for 2m 26s · done 11:06 AM · 1 shell still running\n"
+        "\n"
+        f"{sep}\n"
+        "❯ ок, жду отчет\n"
+        f"{sep}\n"
+        "  ▌ dca-services › main › Opus 5 › high\n"
+        "  ⏵⏵ bypass permissions on · 1 shell · ← for agents\n"
+    )
+
+
+@pytest.fixture
+def sample_pane_working_turn():
+    """The same screen mid-turn: the spinner line shown while Claude works."""
+    sep = "─" * 90
+    return (
+        "  Reading the tracker logs.\n"
+        "\n"
+        "✻ Sautéed… (2m 26s · ↓ 1.2k tokens · esc to interrupt)\n"
+        "\n"
+        f"{sep}\n"
+        "❯ \n"
+        f"{sep}\n"
+        "  ▌ dca-services › main › Opus 5 › high\n"
+    )
+
+
+@pytest.fixture
 def sample_pane_no_ui():
     return "$ echo hello\nhello\n$\n"

@@ -10,7 +10,8 @@ All Claude Code text patterns live here. To support a new UI type or
 a changed Claude Code version, edit UI_PATTERNS / STATUS_SPINNERS.
 
 Key functions: extract_interactive_content(), parse_status_line(),
-strip_pane_chrome(), extract_bash_output(), detect_remote_control().
+is_completed_turn_line(), strip_pane_chrome(), extract_bash_output(),
+detect_remote_control().
 """
 
 import re
@@ -412,6 +413,14 @@ _SPINNER_CATEGORIES = frozenset({"So", "Sm"})
 _MAX_STATUS_PROGRESS_LINES = 8
 _STATUS_PROGRESS_RE = re.compile(r"^\s*(?:⎿\s*)?[✔◼◻◔]\s+\S")
 
+# Claude Code >= 2.1 leaves the spinner glyph on the line that reports a
+# *finished* turn: "✻ Sautéed for 2m 26s · done 11:06 AM · 1 shell still
+# running".  The glyph is the same one a live spinner uses, so the "· done"
+# marker is the only thing that tells a working agent from an idle one.
+_COMPLETED_TURN_RE = re.compile(r"·\s*done\b")
+# A live status line always says how to stop it; a finished one never does.
+_INTERRUPT_HINT = "esc to interrupt"
+
 
 def is_likely_spinner(char: str) -> bool:
     """Check if a character is likely a spinner symbol.
@@ -438,6 +447,23 @@ def is_likely_spinner(char: str) -> bool:
     return category in _SPINNER_CATEGORIES
 
 
+def is_completed_turn_line(line: str) -> bool:
+    """True when a spinner-prefixed line reports a finished turn, not work.
+
+    ``✻ Sautéed for 2m 26s · done 11:06 AM`` — optionally trailed by
+    ``· 1 shell still running`` or ``· 2 background agents`` — is what Claude
+    Code leaves on screen *after* a turn ends.  It keeps the spinner glyph, so
+    reading it as a status line marks the window busy forever: permanent
+    "typing…", a stuck status bubble and an "active" topic emoji.
+
+    A line that also carries the ``esc to interrupt`` hint is genuinely live
+    (only a running turn can be interrupted) and never matches.
+    """
+    if _INTERRUPT_HINT in line.lower():
+        return False
+    return _COMPLETED_TURN_RE.search(line) is not None
+
+
 def parse_status_line(pane_text: str, *, pane_rows: int | None = None) -> str | None:
     """Extract the Claude Code status line from terminal output.
 
@@ -447,6 +473,10 @@ def parse_status_line(pane_text: str, *, pane_rows: int | None = None) -> str | 
 
     When ``pane_rows`` is provided, the separator scan is limited to the
     bottom 40% of the screen as an optimization.
+
+    A spinner line that reports a finished turn (``is_completed_turn_line``)
+    is not a status line: Claude keeps the spinner glyph after the turn ends,
+    and reading it as live work pins the window to "busy" forever.
 
     Returns the text after the spinner, or None if no status line found.
     """
@@ -534,6 +564,12 @@ def _find_status_line_index(lines: list[str], scan_start: int) -> int | None:
             if not candidate:
                 continue
             if is_likely_spinner(candidate[0]):
+                if is_completed_turn_line(candidate):
+                    # A finished turn, not a live status.  Stop the scan
+                    # instead of walking further up: the next separator above
+                    # sits in scrollback, where an older spinner line would
+                    # resurrect exactly the "busy forever" this guards against.
+                    return None
                 return j
             break
     return None

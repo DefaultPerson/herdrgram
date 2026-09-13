@@ -10,6 +10,7 @@ from ccgram.terminal_parser import (
     extract_interactive_content,
     find_chrome_boundary,
     format_status_display,
+    is_completed_turn_line,
     is_likely_spinner,
     parse_status_block,
     parse_status_line,
@@ -173,6 +174,75 @@ class TestParseStatusLine:
 
     def test_uses_fixture(self, sample_pane_status_line: str):
         assert parse_status_line(sample_pane_status_line) == "Reading file src/main.py"
+
+    def test_finished_turn_is_not_a_status(self, sample_pane_completed_turn: str):
+        # The spinner glyph survives the end of the turn; the "· done" marker
+        # is what separates a working agent from one that has stopped.
+        assert parse_status_line(sample_pane_completed_turn, pane_rows=50) is None
+
+    def test_working_turn_still_parses(self, sample_pane_working_turn: str):
+        assert parse_status_line(sample_pane_working_turn, pane_rows=50) == (
+            "Sautéed… (2m 26s · ↓ 1.2k tokens · esc to interrupt)"
+        )
+
+    def test_finished_turn_does_not_fall_back_to_scrollback(self):
+        # An older spinner line further up the scrollback must not be
+        # resurrected once the most recent one reports the turn as done.
+        pane = (
+            "✻ Simmering… (14s · esc to interrupt)\n"
+            f"{_SEPARATOR}\n"
+            "some later output\n"
+            "✻ Sautéed for 2m 26s · done 11:06 AM\n"
+            f"{_SEPARATOR}\n"
+            "❯ \n"
+        )
+        assert parse_status_line(pane) is None
+
+    def test_parse_status_block_skips_finished_turn(
+        self, sample_pane_completed_turn: str
+    ):
+        assert parse_status_block(sample_pane_completed_turn, pane_rows=50) is None
+
+
+class TestIsCompletedTurnLine:
+    @pytest.mark.parametrize(
+        "line",
+        [
+            pytest.param(
+                "✻ Sautéed for 2m 26s · done 11:06 AM · 1 shell still running",
+                id="shell_still_running",
+            ),
+            pytest.param("✻ Sautéed for 2m 26s · done 11:06 AM", id="plain"),
+            pytest.param(
+                "✻ Herding for 9m 1s · done 3:04 PM · 2 background agents",
+                id="background_agents",
+            ),
+            pytest.param("✽ Cooking for 12s · done", id="marker_at_end"),
+        ],
+    )
+    def test_finished_turns(self, line: str):
+        assert is_completed_turn_line(line) is True
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            pytest.param(
+                "✻ Sautéed… (2m 26s · ↓ 1.2k tokens · esc to interrupt)",
+                id="spinner_with_counters",
+            ),
+            pytest.param("· Thinking… (5s)", id="thinking"),
+            pytest.param("✶ Running… (esc to interrupt)", id="running"),
+            pytest.param(
+                "✻ Marking the task done and moving on (3s)", id="done_mid_sentence"
+            ),
+            pytest.param(
+                "✻ Wrapping up · done so far · 7s · esc to interrupt",
+                id="interrupt_hint_wins",
+            ),
+        ],
+    )
+    def test_live_status_lines(self, line: str):
+        assert is_completed_turn_line(line) is False
 
     def test_parse_status_block_includes_progress_lines(self):
         pane = (
@@ -947,6 +1017,16 @@ class TestParseStatusFromScreen:
         from ccgram.terminal_parser import parse_status_from_screen
 
         screen = ScreenBuffer(columns=80, rows=24)
+        assert parse_status_from_screen(screen) is None
+
+    def test_finished_turn_via_screen(self, sample_pane_completed_turn: str):
+        # Same rule on the pyte path: parse_status_from_screen reuses
+        # parse_status_line, so an idle pane yields no status there either.
+        from ccgram.terminal_parser import parse_status_from_screen
+
+        screen = self._make_screen(
+            sample_pane_completed_turn.replace("\n", "\r\n"), columns=100, rows=24
+        )
         assert parse_status_from_screen(screen) is None
 
     def test_matches_regex_result(self):
