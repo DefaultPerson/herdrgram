@@ -409,8 +409,9 @@ _NON_SPINNER_CHARS = frozenset("─│┌┐└┘├┤┬┴┼═║╔╗╚
 # Sm = Symbol Math (∘, ⊛)
 # Note: Po (Punctuation Other) is excluded — it includes common ASCII chars
 # like !, #, %, @, *, / that would cause false positives.
-# Note: the check-mark family is excluded by name (_COMPLETION_GLYPHS) — it is
-# Symbol Other too, but it heads a *finished* row, never a spinning one.
+# Note: the check-mark and marked-checkbox family is excluded by name
+# (_COMPLETION_GLYPHS) — Symbol Other too, but it heads a *finished* row,
+# never a spinning one.
 _SPINNER_CATEGORIES = frozenset({"So", "Sm"})
 _MAX_STATUS_PROGRESS_LINES = 8
 _STATUS_PROGRESS_RE = re.compile(r"^\s*(?:⎿\s*)?[✔◼◻◔]\s+\S")
@@ -426,7 +427,9 @@ _INTERRUPT_HINT = "esc to interrupt"
 # instead of a spinner: "✔ Update installed · Restart to update".  The check
 # mark is Symbol Other, so the generic spinner heuristic would accept it and
 # the notice would read as work in progress for as long as it stays on screen.
-_COMPLETION_GLYPHS = frozenset("✔✓✅☑")
+# ☑ and ☒ join the family: a marked checkbox is Symbol Other too, and it fronts
+# a row that has been answered, which is the opposite of one still spinning.
+_COMPLETION_GLYPHS = frozenset("✔✓✅☑☒")
 _CHROME_NOTICE_RE = re.compile(
     r"\bUpdate installed\b|\bRestart to update\b", re.IGNORECASE
 )
@@ -438,8 +441,8 @@ def is_likely_spinner(char: str) -> bool:
     Uses a two-tier approach:
     1. Fast-path: check the known STATUS_SPINNERS frozenset
     2. Fallback: use Unicode category matching (So, Sm, Braille)
-       while excluding box-drawing, the check-mark family, and other
-       non-spinner characters
+       while excluding box-drawing, the check-mark and marked-checkbox
+       family, and other non-spinner characters
     """
     if not char:
         return False
@@ -485,9 +488,11 @@ def is_status_row_notice(line: str) -> bool:
     the notice was on screen — the same permanent "typing…" a finished-turn
     line causes, from a different glyph.
 
-    Matches on the check-mark family whatever the wording, and on the known
-    notice wording behind any spinner-looking glyph, so a reworded banner or
-    a changed glyph still has one of the two to catch it.
+    Matches on the check-mark and marked-checkbox family (``_COMPLETION_GLYPHS``)
+    whatever the wording, and on the known notice wording behind any
+    spinner-looking glyph, so a reworded banner or a changed glyph still has
+    one of the two to catch it.  Either way the verdict is the same: the row
+    is finished or answered, not work in progress.
     """
     if not line:
         return False

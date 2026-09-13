@@ -62,12 +62,13 @@ class TestIsLikelySpinner:
 
     @pytest.mark.parametrize(
         "char",
-        ["✔", "✓", "✅", "☑"],
-        ids=["heavy_check", "check", "emoji_check", "ballot_check"],
+        ["✔", "✓", "✅", "☑", "☒"],
+        ids=["heavy_check", "check", "emoji_check", "ballot_check", "ballot_x"],
     )
     def test_check_marks_rejected(self, char: str):
         # Symbol Other like the real spinners, but it heads a finished row
-        # ("✔ Update installed · Restart to update"), never a spinning one.
+        # ("✔ Update installed · Restart to update") or an answered one,
+        # never a spinning one.
         assert is_likely_spinner(char) is False
 
     def test_math_symbol_detected(self):
@@ -220,6 +221,11 @@ class TestParseStatusLine:
         assert parse_status_line(sample_pane_update_banner, pane_rows=50) is None
         assert parse_status_block(sample_pane_update_banner, pane_rows=50) is None
 
+    def test_exact_live_banner_line_is_not_a_status(self):
+        # The line as captured from herdr pane wC:p3 while it read idle.
+        pane = f"output\n✔ Update installed · Restart to update\n{_SEPARATOR}\n❯ \n"
+        assert parse_status_line(pane, pane_rows=60) is None
+
     def test_update_banner_does_not_fall_back_to_scrollback(self):
         pane = (
             "✻ Simmering… (14s · esc to interrupt)\n"
@@ -240,6 +246,7 @@ class TestIsStatusRowNotice:
             pytest.param("✓ Update installed", id="light_check"),
             pytest.param("☑ Restart to update", id="ballot_check"),
             pytest.param("✔ Anything at all", id="check_mark_alone"),
+            pytest.param("☒ Option B", id="marked_checkbox"),
         ],
     )
     def test_notices(self, line: str):
