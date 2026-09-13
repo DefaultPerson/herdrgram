@@ -116,7 +116,7 @@ Top-level (constants, leaves, top-level commands):
 - `callback_data.py` — `CB_*` callback data constants.
 - `callback_helpers.py` — `user_owns_window`, `get_thread_id`.
 - `callback_registry.py` — prefix-based callback dispatch with self-registration decorator.
-- `cleanup.py` — topic teardown via TopicStateRegistry + async bot cleanup.
+- `cleanup.py` — topic teardown via TopicStateRegistry + async bot cleanup; `/unbind` (release the binding, keep the topic) and `/close` (release the binding, then close the topic — deleting it where Telegram supports no close, as in a private chat with topics).
 - `command_history.py` — per-user/per-topic in-memory command recall (max 20).
 - `file_handler.py` — photo/document handler (save to `.ccgram-uploads/`, notify agent).
 - `hook_events.py` — dispatcher for `Stop`, `StopFailure`, `SessionEnd`, `Notification`, `Subagent*`, `Team*`.

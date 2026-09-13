@@ -7,11 +7,16 @@ interactive UI, user_data).
 
 Functions:
   - clear_topic_state: Clean up all memory state for a specific topic
+  - unbind_command: release a topic's binding, leaving the topic in place
+  - close_command: release the binding and remove the topic from Telegram
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+
+import structlog
+from telegram.error import BadRequest, TelegramError
 
 from ..telegram_client import PTBTelegramClient, TelegramClient
 
@@ -29,9 +34,11 @@ from .callback_helpers import get_thread_id
 from .callback_tokens import revoke_window_tokens
 from .interactive import clear_interactive_msg
 from .messaging_pipeline.message_queue import enqueue_status_update
-from .messaging_pipeline.message_sender import safe_reply
+from .messaging_pipeline.message_sender import is_thread_gone, safe_reply, safe_send
 from .status.status_bubble import clear_status_msg_info
 from .user_state import PENDING_THREAD_ID, PENDING_THREAD_TEXT, VOICE_PENDING
+
+logger = structlog.get_logger()
 
 
 async def clear_topic_state(
@@ -176,6 +183,155 @@ async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         update.message,
         f"✂ Unbound from window `{display}`. The session is still running.\n"
         "Send a message in this topic to rebind or create a new session.",
+    )
+
+
+# ── /close ────────────────────────────────────────────────────────────────
+
+CLOSE_NOT_IN_TOPIC = "❌ Use this command inside a topic."
+CLOSE_CLOSED = "🔒 Topic closed: {name}"
+CLOSE_DELETED = "🗑 Topic deleted: {name}"
+CLOSE_SESSION_ALIVE = "The session keeps running and is offered again in General."
+CLOSE_NO_BINDING = "No session was bound to it."
+CLOSE_FAILED = (
+    "✂ Unbound from `{name}`, but Telegram would not remove this topic: {error}\n"
+    "Delete it by hand if you want it gone — the session is unaffected."
+)
+
+
+def _close_unsupported(exc: TelegramError) -> bool:
+    """Whether Telegram refused the close because this chat has no forum.
+
+    ``closeForumTopic`` is a supergroup-forum method. A private chat with
+    topics enabled answers "the chat is not a supergroup forum" for both close
+    and reopen, and offers deletion as its only removal — so that one refusal
+    is a signal to delete, not a failure.
+    """
+    if not isinstance(exc, BadRequest):
+        return False
+    message = exc.message.lower()
+    return "not a supergroup forum" in message or "not a forum" in message
+
+
+async def _remove_topic(
+    client: TelegramClient, chat_id: int, thread_id: int
+) -> tuple[bool, bool, str | None]:
+    """Close *thread_id*, deleting it where Telegram cannot close.
+
+    Returns ``(removed, deleted, error)``. A topic that is already gone counts
+    as removed: the user asked for it not to be there.
+    """
+    try:
+        closed = await client.close_forum_topic(
+            chat_id=chat_id, message_thread_id=thread_id
+        )
+    except TelegramError as exc:
+        if is_thread_gone(exc):
+            return True, True, None
+        if not _close_unsupported(exc):
+            return False, False, str(exc)
+        logger.debug(
+            "close_forum_topic unsupported, deleting instead",
+            chat_id=chat_id,
+            thread_id=thread_id,
+        )
+    else:
+        if closed is not False:
+            return True, False, None
+        logger.debug(
+            "close_forum_topic refused, deleting instead",
+            chat_id=chat_id,
+            thread_id=thread_id,
+        )
+
+    try:
+        deleted = await client.delete_forum_topic(
+            chat_id=chat_id, message_thread_id=thread_id
+        )
+    except TelegramError as exc:
+        if is_thread_gone(exc):
+            return True, True, None
+        return False, False, str(exc)
+    if deleted is False:
+        return False, False, "delete_forum_topic was refused"
+    return True, True, None
+
+
+async def close_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /close — retire this topic in Telegram without ending the session.
+
+    The mirror image of closing a topic by hand under
+    ``CCGRAM_KILL_ON_TOPIC_CLOSE``: there the topic is the session and closing
+    it ends both, here only the Telegram side goes away. The binding is dropped
+    first, so the ``forum_topic_closed`` update this triggers finds nothing to
+    kill, then the topic is closed — or deleted, in a private chat where
+    Telegram supports no other removal. Discovery sees an unbound live window
+    within a poll cycle and offers it again in General.
+    """
+    user = update.effective_user
+    if not user or not config.is_user_allowed(user.id):
+        return
+    if not update.message:
+        return
+
+    thread_id = get_thread_id(update)
+    if thread_id is None:
+        if (
+            update.message
+            and update.effective_chat
+            and is_general_topic(update.message)
+        ):
+            await handle_general_topic_message(
+                update.get_bot(), update.message, update.effective_chat.id
+            )
+        else:
+            await safe_reply(update.message, CLOSE_NOT_IN_TOPIC)
+        return
+
+    raw_chat_id = update.effective_chat.id if update.effective_chat else None
+    chat_id = raw_chat_id if isinstance(raw_chat_id, int) else None
+    window_id = (
+        thread_router.get_window_for_thread(user.id, thread_id, chat_id)
+        if chat_id is not None
+        else thread_router.get_window_for_thread(user.id, thread_id)
+    )
+    client = PTBTelegramClient(context.bot)
+    display = thread_router.get_display_name(window_id) if window_id else ""
+    name = display or window_id or str(thread_id)
+
+    if window_id:
+        await enqueue_status_update(client, user.id, window_id, None, thread_id)
+        clear_kwargs: dict = {"window_id": window_id, "window_dead": False}
+        if chat_id is not None:
+            clear_kwargs["chat_id"] = chat_id
+        await clear_topic_state(
+            user.id, thread_id, client, context.user_data, **clear_kwargs
+        )
+        thread_router.unbind_thread(user.id, thread_id, chat_id=chat_id)
+
+    target_chat_id = (
+        chat_id
+        if chat_id is not None
+        else thread_router.resolve_chat_id(user.id, thread_id)
+    )
+    removed, deleted, error = await _remove_topic(client, target_chat_id, thread_id)
+    if not removed:
+        await safe_reply(
+            update.message, CLOSE_FAILED.format(name=name, error=error or "unknown")
+        )
+        return
+
+    # The note goes to General, the chat's control lane: a deleted topic takes
+    # any reply in it with it, and a closed one may refuse further posts.
+    headline = (CLOSE_DELETED if deleted else CLOSE_CLOSED).format(name=name)
+    tail = CLOSE_SESSION_ALIVE if window_id else CLOSE_NO_BINDING
+    await safe_send(client, target_chat_id, f"{headline}\n{tail}")
+    logger.info(
+        "topic_retired_by_command",
+        user_id=user.id,
+        thread_id=thread_id,
+        window_id=window_id or "",
+        deleted=deleted,
     )
 
 

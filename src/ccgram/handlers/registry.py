@@ -30,7 +30,7 @@ from ..config import config
 from .callback_registry import dispatch as _dispatch_callback
 from .callback_registry import load_handlers as _load_callback_handlers
 from .agent_command import agent_command
-from .cleanup import rollback_command, unbind_command
+from .cleanup import close_command, rollback_command, unbind_command
 from .command_history import recall_command
 from .commands import (
     commands_command,
@@ -129,6 +129,7 @@ def register_all(
         CommandSpec("sessions", sessions_command),
         CommandSpec("resume", resume_command),
         CommandSpec("unbind", unbind_command),
+        CommandSpec("close", close_command),
         CommandSpec("rollback", rollback_command),
         CommandSpec("upgrade", upgrade_command),
         CommandSpec("recall", recall_command),
@@ -210,6 +211,7 @@ COMMAND_NAMES: tuple[str, ...] = (
     "sessions",
     "resume",
     "unbind",
+    "close",
     "rollback",
     "upgrade",
     "recall",

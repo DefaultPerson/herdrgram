@@ -85,6 +85,7 @@ _BOT_COMMANDS: list[tuple[str, str]] = [
     ("restore", "Recover a dead topic"),
     ("sync", "Audit and fix state"),
     ("unbind", "Unbind this topic"),
+    ("close", "Close this topic, keep the session"),
     ("recall", "Recall recent commands"),
     ("toolbar", "Show action toolbar"),
     ("verbose", "Toggle tool call batching"),
