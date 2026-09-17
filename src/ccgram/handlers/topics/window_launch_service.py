@@ -211,39 +211,87 @@ async def _wait_for_shell_ready(window_id: str, *, attempts: int = 5) -> None:
         await asyncio.sleep(0.2)
 
 
+PROMPT_TRUST = "workspace trust"
+PROMPT_BYPASS = "bypass permissions"
+
+# The status-bar line Claude shows once bypass permissions are active. Its
+# presence means the session is up and nothing is waiting to be confirmed.
+BYPASS_ACTIVE_MARKER = "⏵⏵ bypass permissions"
+
+# A version that chains two dialogs shows the second immediately after the
+# first. Waiting out the whole confirmation timeout for one that will never
+# come would add that timeout to every session creation.
+_CHAINED_PROMPT_GRACE_SECONDS = 3.0
+
+
+def recognize_confirmation_prompt(text: str | None) -> str | None:
+    """Name the confirmation dialog on screen, or None when there is none.
+
+    Claude Code blocks a new session behind one of two dialogs, and which one
+    appears depends on the directory and the version:
+
+      - the workspace trust check ("Quick safety check: Is this a project you
+        created or one you trust?", offering "Yes, I trust this folder"), shown
+        the first time Claude opens a directory. It carries no mention of
+        permissions, which is why matching only on the wording below missed it
+        and left every session in a new directory sitting at the dialog;
+      - the bypass-permissions warning, shown for
+        ``--dangerously-skip-permissions``.
+
+    Both are two-option pickers whose default is the refusal, so both are
+    answered the same way.
+    """
+    lower = text.lower() if text else ""
+    if not lower:
+        return None
+    if "yes, i trust this folder" in lower or (
+        "trust" in lower and "no, exit" in lower
+    ):
+        return PROMPT_TRUST
+    if "bypass permissions" in lower and ("no, exit" in lower or "i accept" in lower):
+        return PROMPT_BYPASS
+    return None
+
+
 async def _accept_yolo_confirmation(
     window_id: str, *, timeout: float | None = None
 ) -> bool:
-    """Detect and accept Claude Code's bypass permissions confirmation prompt.
+    """Answer whatever Claude Code is blocking the new session behind.
 
-    When launched with --dangerously-skip-permissions, Claude Code shows a
-    TUI confirmation where "No, exit" is the default selection. Sends
-    Down+Enter to select the "Yes" option so the session can start.
+    Sends Down+Enter, which moves off the refusal both dialogs select by
+    default. Each kind is answered at most once, so a screen still showing a
+    dialog we just answered cannot be answered twice, and a version that
+    chains the two is handled in one pass. Returns whether anything was
+    answered; nothing to answer is the normal case for a directory Claude
+    already trusts, and is not a failure.
     """
     loop = asyncio.get_running_loop()
     timeout = config.yolo_confirmation_timeout if timeout is None else timeout
     deadline = loop.time() + timeout
+    answered: set[str] = set()
     while loop.time() < deadline:
         text = await tmux_manager.capture_pane(window_id)
-        lower = text.lower() if text else ""
-        if "bypass permissions" in lower and (
-            "no, exit" in lower or "i accept" in lower
-        ):
+        prompt = recognize_confirmation_prompt(text)
+        if prompt is not None and prompt not in answered:
             await asyncio.sleep(0.3)
             await tmux_manager.send_keys(window_id, "Down", enter=False, literal=False)
             await asyncio.sleep(0.15)
             await tmux_manager.send_keys(window_id, "Enter", enter=False, literal=False)
-            logger.info("Accepted bypass permissions prompt for window %s", window_id)
-            return True
-        if "⏵⏵ bypass permissions" in lower:
-            return False
+            answered.add(prompt)
+            logger.info("Accepted the %s confirmation for window %s", prompt, window_id)
+            deadline = min(deadline, loop.time() + _CHAINED_PROMPT_GRACE_SECONDS)
+            await asyncio.sleep(0.4)
+            continue
+        if BYPASS_ACTIVE_MARKER in (text.lower() if text else ""):
+            return bool(answered)
         await asyncio.sleep(0.5)
-    logger.warning(
-        "Bypass permissions prompt not detected within %.0fs for window %s",
-        timeout,
-        window_id,
-    )
-    return False
+    if not answered:
+        logger.warning(
+            "No confirmation prompt appeared within %.0fs for window %s",
+            timeout,
+            window_id,
+        )
+    return bool(answered)
 
 
 def _follow_supersession(window_id: str) -> str:

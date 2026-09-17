@@ -1,4 +1,5 @@
 from pathlib import Path
+from itertools import count
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -502,26 +503,39 @@ class TestAcceptYoloConfirmation:
 
     @patch("ccgram.handlers.topics.window_launch_service.tmux_manager")
     async def test_polls_until_prompt_appears(self, mock_tmux: MagicMock) -> None:
+        screens = [
+            None,
+            "Loading...",
+            "Bypass Permissions mode\n❯ 1. No, exit",
+            "⏵⏵ bypass permissions on",
+        ]
         mock_tmux.capture_pane = AsyncMock(
-            side_effect=[
-                None,
-                "Loading...",
-                "Bypass Permissions mode\n❯ 1. No, exit",
-            ]
+            side_effect=lambda *_a, **_k: (
+                screens.pop(0) if len(screens) > 1 else screens[0]
+            )
         )
         mock_tmux.send_keys = AsyncMock(return_value=True)
 
         assert await _accept_yolo_confirmation("@5", timeout=5.0) is True
-        assert mock_tmux.capture_pane.await_count == 3
+        assert mock_tmux.capture_pane.await_count >= 3
 
     @patch("ccgram.handlers.topics.window_launch_service.asyncio.get_running_loop")
     @patch("ccgram.handlers.topics.window_launch_service.tmux_manager")
     async def test_configured_timeout_allows_slow_cold_start(
         self, mock_tmux: MagicMock, mock_get_loop: MagicMock, monkeypatch
     ) -> None:
-        mock_get_loop.return_value.time.side_effect = [0.0, 0.0, 9.0, 9.0]
+        # A clock that keeps ticking: the prompt lands ~9s in, which only a
+        # timeout well past the default reaches.
+        mock_get_loop.return_value.time.side_effect = count(0.0, 4.5)
+        screens = [
+            "Loading...",
+            "Bypass Permissions mode\n❯ 1. No, exit",
+            "⏵⏵ bypass permissions on",
+        ]
         mock_tmux.capture_pane = AsyncMock(
-            side_effect=["Loading...", "Bypass Permissions mode\n❯ 1. No, exit"]
+            side_effect=lambda *_a, **_k: (
+                screens.pop(0) if len(screens) > 1 else screens[0]
+            )
         )
         mock_tmux.send_keys = AsyncMock(return_value=True)
         monkeypatch.setattr(
@@ -531,4 +545,4 @@ class TestAcceptYoloConfirmation:
         )
 
         assert await _accept_yolo_confirmation("@5") is True
-        assert mock_tmux.capture_pane.await_count == 2
+        assert mock_tmux.capture_pane.await_count >= 2

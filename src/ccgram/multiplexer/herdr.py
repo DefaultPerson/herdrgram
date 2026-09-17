@@ -39,6 +39,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from collections import Counter
 from collections.abc import (
     AsyncGenerator,
@@ -300,6 +301,29 @@ def herdr_session_target_id(composite: HerdrSessionComposite) -> str:
     return f"{HERDR_SESSION_TARGET_PREFIX}{digest}"
 
 
+# Agents that can stay sessionless for a while yet still expose a unique
+# terminal identity, so a stand-in target can be minted for the gap.
+_TERMINAL_FALLBACK_AGENTS = frozenset({"claude", "codex", "gemini"})
+
+# How long a target handed to topic creation stays eligible to be published as
+# superseded, and how many are remembered. Creation resolves within seconds;
+# the window is generous so a slow agent still converges, and bounded so a
+# long-lived process cannot accumulate them.
+_PROVISIONAL_TARGET_TTL_SECONDS = 300.0
+_MAX_PROVISIONAL_TARGETS = 64
+
+
+def terminal_fallback_composite(agent: str, terminal_id: str) -> HerdrSessionComposite:
+    """The stand-in identity minted while Herdr cannot name an agent's session.
+
+    One definition for its two users: the parser that mints it for a sessionless
+    record, and the projection that publishes it as the identity a named record
+    superseded. If those two ever disagreed, a created window would keep waiting
+    on an id nothing answers to.
+    """
+    return HerdrSessionComposite("herdr", agent, "terminal", terminal_id)
+
+
 def _parse_live_record(record: Mapping[str, object]) -> HerdrLiveRecord | None:
     composite = _session_composite(record)
     locators = {
@@ -319,13 +343,13 @@ def _parse_live_record(record: Mapping[str, object]) -> HerdrLiveRecord | None:
                 "agent.list contains a malformed sessionless agent"
             )
         terminal_id = locators["terminal_id"]
-        if agent not in {"claude", "codex", "gemini"} or terminal_id is None:
+        if agent not in _TERMINAL_FALLBACK_AGENTS or terminal_id is None:
             return None
         # Providers that may remain sessionless still expose a unique terminal
         # identity. Pi is excluded: Herdr publishes its durable session shortly
         # after startup, and creating a terminal topic in that gap would create
         # a second topic when the durable identity arrives.
-        composite = HerdrSessionComposite("herdr", agent, "terminal", terminal_id)
+        composite = terminal_fallback_composite(agent, terminal_id)
     target_id = herdr_session_target_id(composite)
     # ``cwd`` is the agent's own working directory; ``foreground_cwd`` follows
     # whatever the agent currently shells into (a worktree, a plugin cache) and
@@ -428,6 +452,9 @@ class HerdrManager:
         self._binary = shutil.which(binary) or binary
         self._run: HerdrRunner = runner or self._subprocess_run
         self._open_stream: HerdrStreamOpener = stream_opener or self._default_stream
+        # Stand-in targets this adapter handed to topic creation, by mint time.
+        # See ``_superseded_target_ids`` for why only these are ever published.
+        self._provisional_targets: dict[str, float] = {}
 
     def _default_stream(
         self, subscriptions: Sequence[Mapping[str, object]]
@@ -680,9 +707,8 @@ class HerdrManager:
             )
         return matches[0]
 
-    @staticmethod
     def _live_ref(
-        record: HerdrLiveRecord, label: str, *, adoptable: bool = True
+        self, record: HerdrLiveRecord, label: str, *, adoptable: bool = True
     ) -> WindowRef:
         """Project a live record without exposing reusable locator aliases.
 
@@ -721,7 +747,62 @@ class HerdrManager:
             and (named_session or not config.herdr_require_native_session),
             native_session_id=native_session_id,
             native_agent=record.composite.agent if native_session_id else "",
+            alias_window_ids=self._superseded_target_ids(record),
         )
+
+    def _note_provisional_target(self, record: HerdrLiveRecord) -> None:
+        """Remember a stand-in target just handed to topic creation.
+
+        Called by the creation transaction alone. Herdr publishes an agent
+        before it can name that agent's session, so creation is handed the
+        stand-in and then waits for the SessionStart hook — which resolves the
+        pane at its own moment and writes ``session_map.json`` under the named
+        target. Recording the stand-in here is what lets the named record
+        declare the supersession, so the wait re-points instead of timing out
+        and unbinding the topic it just created.
+        """
+        if record.composite.kind == "id":
+            return
+        now = time.monotonic()
+        self._provisional_targets = {
+            target: minted
+            for target, minted in self._provisional_targets.items()
+            if now - minted < _PROVISIONAL_TARGET_TTL_SECONDS
+        }
+        self._provisional_targets[record.target_id] = now
+        while len(self._provisional_targets) > _MAX_PROVISIONAL_TARGETS:
+            oldest = min(
+                self._provisional_targets, key=self._provisional_targets.__getitem__
+            )
+            del self._provisional_targets[oldest]
+
+    def _superseded_target_ids(self, record: HerdrLiveRecord) -> tuple[str, ...]:
+        """Ids this record's identity replaced, for reconciliation to fold.
+
+        Deliberately narrow: the only supersession this adapter declares is a
+        stand-in *it handed to a creation flow that is still waiting on it*.
+        Identity here is otherwise absolute — a re-keyed session (``/clear``),
+        a resume, or an agent that restarted in a pane whose old topic is still
+        bound must each stay a distinct target, because inheriting one would
+        hand an existing topic a conversation that is not the one it was
+        following. Those cases never pass through ``_note_provisional_target``,
+        so they never produce an alias here.
+        """
+        if record.composite.kind != "id":
+            return ()
+        agent = record.composite.agent
+        if not record.terminal_id or agent not in _TERMINAL_FALLBACK_AGENTS:
+            return ()
+        provisional = herdr_session_target_id(
+            terminal_fallback_composite(agent, record.terminal_id)
+        )
+        minted = self._provisional_targets.get(provisional)
+        if minted is None:
+            return ()
+        if time.monotonic() - minted >= _PROVISIONAL_TARGET_TTL_SECONDS:
+            del self._provisional_targets[provisional]
+            return ()
+        return (provisional,)
 
     async def _reconciliation_labels(
         self, records: Sequence[HerdrLiveRecord]
@@ -1452,6 +1533,7 @@ class HerdrManager:
                 pane_id=pane_id,
                 workspace_id=workspace_id,
             )
+            self._note_provisional_target(record)
             refs = await self._project_live_refs([record])
             if len(refs) != 1:
                 raise HerdrError("new Herdr pane has no valid display metadata")
@@ -1552,6 +1634,7 @@ class HerdrManager:
                 return False, str(exc), "", ""
             raise
 
+        self._note_provisional_target(record)
         refs = await self._project_live_refs([record])
         if len(refs) != 1:
             await self._call_ok(["tab", "close", tab_id])

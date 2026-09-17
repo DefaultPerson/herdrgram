@@ -11,12 +11,16 @@ import pytest
 
 from ccgram.multiplexer.base import TopicTargetResult
 from ccgram.handlers.topics.window_launch_service import (
+    PROMPT_BYPASS,
+    PROMPT_TRUST,
     WindowLaunchRequest,
+    _accept_yolo_confirmation,
     _create_topic_window,
     _cwd_within,
     _follow_supersession,
     _persist_worktree_state,
     launch_window,
+    recognize_confirmation_prompt,
 )
 from ccgram.handlers.user_state import (
     PENDING_THREAD_ID,
@@ -526,3 +530,124 @@ class TestLaunchWindowFailure:
         mock_safe_send.assert_awaited_once()
         assert "pane is gone" in mock_safe_send.call_args.args[2]
         assert mock_safe_send.call_args.kwargs == {"message_thread_id": 42}
+
+
+# ── the confirmation dialogs Claude Code blocks a new session behind ────────
+
+# Verbatim from a live pane (Claude Code 2.x, a directory it had not seen
+# before). Note it never says "permissions": matching on that wording left
+# every session created in a new directory parked on "No, exit" until the
+# creation flow gave up, killed the pane and unbound the topic.
+TRUST_DIALOG = """\
+ Accessing workspace:
+
+ /home/user/projects/thing
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a
+ well-known open source project, or work from your team). If not, take a moment to review what's
+ in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel"""
+
+BYPASS_DIALOG = """\
+ WARNING: Claude Code running in Bypass Permissions mode
+
+ In Bypass Permissions mode, Claude Code will not ask for confirmation.
+
+ ❯ No, exit
+   Yes, I accept"""
+
+RUNNING_PANE = """\
+  ▌ thing › Sonnet 5 › high
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents"""
+
+
+class TestRecognizeConfirmationPrompt:
+    def test_the_workspace_trust_check_is_recognized(self) -> None:
+        assert recognize_confirmation_prompt(TRUST_DIALOG) == PROMPT_TRUST
+
+    def test_the_bypass_permissions_warning_is_recognized(self) -> None:
+        assert recognize_confirmation_prompt(BYPASS_DIALOG) == PROMPT_BYPASS
+
+    def test_a_running_session_is_not_a_prompt(self) -> None:
+        """The status bar carries the words but asks nothing."""
+        assert recognize_confirmation_prompt(RUNNING_PANE) is None
+
+    @pytest.mark.parametrize("text", ["", None, "   ", "$ claude"])
+    def test_nothing_on_screen_is_no_prompt(self, text) -> None:
+        assert recognize_confirmation_prompt(text) is None
+
+
+@contextlib.contextmanager
+def _confirmation_env(*screens: str):
+    """Serve one pane capture per poll, repeating the last one forever."""
+    frames = list(screens)
+
+    async def capture(_window_id: str) -> str:
+        return frames.pop(0) if len(frames) > 1 else frames[0]
+
+    with (
+        patch(f"{_MODULE}tmux_manager") as mux,
+        patch(f"{_MODULE}asyncio.sleep", new_callable=AsyncMock),
+    ):
+        mux.capture_pane = AsyncMock(side_effect=capture)
+        mux.send_keys = AsyncMock()
+        yield mux
+
+
+def _keys(mux) -> list[str]:
+    return [call.args[1] for call in mux.send_keys.await_args_list]
+
+
+class TestAcceptYoloConfirmation:
+    async def test_the_trust_check_is_answered_with_down_then_enter(self) -> None:
+        """ "No, exit" is the default, so the answer is the second option."""
+        with _confirmation_env(TRUST_DIALOG, RUNNING_PANE) as mux:
+            accepted = await _accept_yolo_confirmation("@1", timeout=5.0)
+
+        assert accepted is True
+        assert _keys(mux) == ["Down", "Enter"]
+
+    async def test_the_bypass_warning_is_answered_the_same_way(self) -> None:
+        with _confirmation_env(BYPASS_DIALOG, RUNNING_PANE) as mux:
+            accepted = await _accept_yolo_confirmation("@1", timeout=5.0)
+
+        assert accepted is True
+        assert _keys(mux) == ["Down", "Enter"]
+
+    async def test_a_dialog_still_on_screen_is_not_answered_twice(self) -> None:
+        """The pane redraws slowly; a second Down+Enter would hit the prompt."""
+        with _confirmation_env(TRUST_DIALOG, TRUST_DIALOG, RUNNING_PANE) as mux:
+            await _accept_yolo_confirmation("@1", timeout=5.0)
+
+        assert _keys(mux) == ["Down", "Enter"]
+
+    async def test_two_chained_dialogs_are_both_answered(self) -> None:
+        with _confirmation_env(TRUST_DIALOG, BYPASS_DIALOG, RUNNING_PANE) as mux:
+            accepted = await _accept_yolo_confirmation("@1", timeout=5.0)
+
+        assert accepted is True
+        assert _keys(mux) == ["Down", "Enter", "Down", "Enter"]
+
+    async def test_an_already_trusted_directory_asks_nothing(self) -> None:
+        """Not a failure: Claude starts straight away and the flow moves on."""
+        with _confirmation_env(RUNNING_PANE) as mux:
+            accepted = await _accept_yolo_confirmation("@1", timeout=5.0)
+
+        assert accepted is False
+        assert _keys(mux) == []
+        mux.capture_pane.assert_awaited_once()
+
+    async def test_a_silent_pane_gives_up_at_the_timeout(self) -> None:
+        with _confirmation_env("") as mux:
+            accepted = await _accept_yolo_confirmation("@1", timeout=0.0)
+
+        assert accepted is False
+        assert _keys(mux) == []

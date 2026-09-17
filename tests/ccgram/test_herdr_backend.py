@@ -81,7 +81,7 @@ def _agent(
     **extra: object,
 ) -> dict[str, object]:
     return {
-        "terminal_id": "term-a",
+        "terminal_id": extra.pop("terminal_id", "term-a"),
         "pane_id": pane_id,
         "tab_id": tab_id,
         "workspace_id": workspace_id,
@@ -2262,3 +2262,122 @@ async def test_tab_style_still_hides_internal_tabs(tab_label_style: None) -> Non
     ).list_windows()
 
     assert [w.window_name for w in windows] == ["2"]
+
+
+# ── supersession of a target handed to topic creation ──────────────────────
+
+
+def _created_fake(record: Mapping[str, object]) -> FakeHerdr:
+    """A runner that can serve one full ``create_topic_target`` transaction."""
+    return (
+        _live_fake(record)
+        .on("workspace", "create", out=_result(workspace={"workspace_id": "w2"}))
+        .on(
+            "tab",
+            "create",
+            out=_result(
+                tab={"tab_id": "w2:t1", "label": "tab"},
+                root_pane={"pane_id": "w2:p1"},
+            ),
+        )
+        .on("pane", "run", out=_result(ok=True))
+    )
+
+
+async def test_creation_gets_the_standin_when_the_session_is_unnamed(
+    tmp_path,
+) -> None:
+    """Herdr publishes the agent before it can name its session."""
+    manager = _manager(_created_fake(_sessionless()))
+
+    target = await manager.create_topic_target(
+        str(tmp_path), launch_command="claude", workspace_id=None
+    )
+
+    assert target.target_id == _sessionless_target("term-a")
+
+
+async def test_the_named_session_supersedes_the_standin_creation_holds(
+    tmp_path,
+) -> None:
+    """The bridge: the hook writes under the named id, creation waits on the stand-in.
+
+    Without this the creation flow waits out its timeout on an id nothing will
+    ever write again, then kills the session and unbinds the topic it just made.
+    """
+    runner = _SnapshotSequence(
+        _created_fake(_sessionless()),
+        _live_fake(_agent(value="named-session")),
+    )
+    manager = HerdrManager(socket_path="/tmp/herdr.sock", runner=runner)
+
+    created = await manager.create_topic_target(
+        str(tmp_path), launch_command="claude", workspace_id=None
+    )
+    runner.advance()
+    named = (await manager.list_windows())[0]
+
+    assert named.window_id == _target("named-session")
+    assert named.alias_window_ids == (created.target_id,)
+
+
+async def test_a_session_this_adapter_never_created_supersedes_nothing() -> None:
+    """The narrow rule: only a stand-in creation is waiting on is ever folded.
+
+    A re-keyed, resumed or restarted agent reaches the same named record by a
+    path that never handed anybody a stand-in, and inheriting a topic there
+    would point it at a conversation it was not following.
+    """
+    windows = await _manager(_live_fake(_agent(value="named-session"))).list_windows()
+
+    assert windows[0].alias_window_ids == ()
+
+
+async def test_the_supersession_expires_with_its_creation(
+    tmp_path, monkeypatch
+) -> None:
+    """A stand-in nobody is waiting on any more is not published."""
+    runner = _SnapshotSequence(
+        _created_fake(_sessionless()),
+        _live_fake(_agent(value="named-session")),
+    )
+    manager = HerdrManager(socket_path="/tmp/herdr.sock", runner=runner)
+    await manager.create_topic_target(
+        str(tmp_path), launch_command="claude", workspace_id=None
+    )
+    runner.advance()
+
+    monkeypatch.setattr(
+        herdr_module,
+        "_PROVISIONAL_TARGET_TTL_SECONDS",
+        -1.0,
+    )
+    named = (await manager.list_windows())[0]
+
+    assert named.alias_window_ids == ()
+
+
+async def test_only_the_standin_for_this_terminal_is_folded(tmp_path) -> None:
+    """One creation does not make every named session claim a supersession."""
+    runner = _SnapshotSequence(
+        _created_fake(_sessionless(terminal_id="term-a")),
+        _live_fake(
+            _agent(value="mine", terminal_id="term-a"),
+            _agent(
+                pane_id="w2:p2",
+                tab_id="w2:t2",
+                value="someone-else",
+                terminal_id="term-b",
+            ),
+        ),
+    )
+    manager = HerdrManager(socket_path="/tmp/herdr.sock", runner=runner)
+    await manager.create_topic_target(
+        str(tmp_path), launch_command="claude", workspace_id=None
+    )
+    runner.advance()
+
+    windows = {w.window_id: w for w in await manager.list_windows()}
+
+    assert windows[_target("mine")].alias_window_ids == (_sessionless_target("term-a"),)
+    assert windows[_target("someone-else")].alias_window_ids == ()

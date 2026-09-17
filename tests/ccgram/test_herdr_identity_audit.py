@@ -34,8 +34,16 @@ def test_record_assembler_uses_guarded_terminal_fallback() -> None:
         source.index("def _parse_live_record") : source.index("class HerdrManager")
     ]
     assert "if composite is None:" in section
-    assert 'agent not in {"claude", "codex", "gemini"}' in section
-    assert 'HerdrSessionComposite("herdr", agent, "terminal", terminal_id)' in section
+    assert "agent not in _TERMINAL_FALLBACK_AGENTS" in section
+    assert "composite = terminal_fallback_composite(agent, terminal_id)" in section
+    # Exactly one definition of the stand-in, read by both the assembler above
+    # and the supersession the creation flow depends on. Two would let the id
+    # creation waits on drift from the id a named record declares superseded.
+    assert source.count("def terminal_fallback_composite(") == 1
+    assert 'HerdrSessionComposite("herdr", agent, "terminal", terminal_id)' in source
+    assert (
+        '_TERMINAL_FALLBACK_AGENTS = frozenset({"claude", "codex", "gemini"})' in source
+    )
 
 
 def test_persisted_target_predicate_uses_the_shared_exact_validator() -> None:
