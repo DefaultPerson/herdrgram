@@ -600,6 +600,32 @@ class TestCustomToolCallOutput:
         )
         assert messages[0].text == "dict result"
 
+    def test_content_block_output_preserves_text_and_clears_pending(self) -> None:
+        codex = CodexProvider()
+        entries = [
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "ct1",
+                    "output": [
+                        {"type": "input_text", "text": "first result"},
+                        {"type": "image", "image_url": "data:image/png;base64,"},
+                        {"type": "input_text", "text": "second result"},
+                    ],
+                },
+            }
+        ]
+        messages, pending = codex.parse_transcript_entries(
+            entries, {"ct1": ("exec", "exec")}
+        )
+        assert len(messages) == 1
+        assert messages[0].text == "first result\nsecond result"
+        assert messages[0].content_type == "tool_result"
+        assert messages[0].tool_name == "exec"
+        assert messages[0].tool_use_id == "ct1"
+        assert pending == {}
+
     def test_no_pending_match_returns_raw_output(self) -> None:
         codex = CodexProvider()
         entries = [
