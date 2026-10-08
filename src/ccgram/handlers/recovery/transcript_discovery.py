@@ -1,7 +1,7 @@
-"""Transcript discovery for hookless providers.
+"""Transcript discovery and recovery from native session identities.
 
-Discovers and registers transcripts for providers without hook support
-(Codex, Gemini). Also handles provider auto-detection from pane process
+Discovers and registers transcripts when lifecycle hooks are unavailable.
+Also handles provider auto-detection from pane process
 and shell ↔ agent transitions.
 
 Key components:
@@ -12,6 +12,7 @@ Key components:
 """
 
 import asyncio
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -59,14 +60,33 @@ def _session_id_already_bound(session_id: str, window_id: str) -> bool:
     return False
 
 
-# Providers whose transcript file is fully determined by a session id and a
-# working directory. Claude names the file after the session id inside a
-# directory derived from the cwd, so a backend that publishes the session id
-# gives us everything needed to find it. Codex and Gemini name their files by
-# their own scheme and are already located by the hookless scan below, so they
-# are deliberately absent — an entry here is a claim that the pair is enough.
+def _find_codex_transcript(session_id: str, cwd: str) -> Path | None:
+    """Resolve exactly the primary Codex session the backend names."""
+    # Lazy: provider format imports can reach this recovery module.
+    from ...providers.base import RESUME_ID_RE
+
+    # Lazy: Codex parsing imports can reach this recovery module.
+    from ...providers.codex import _is_primary_codex_session, _read_codex_session_meta
+
+    if not RESUME_ID_RE.fullmatch(session_id):
+        return None
+    codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    for path in (codex_home.expanduser() / "sessions").rglob(f"*-{session_id}.jsonl"):
+        meta = _read_codex_session_meta(path)
+        if (
+            meta is not None
+            and meta.get("id") == session_id
+            and meta.get("cwd") == cwd
+            and _is_primary_codex_session(meta)
+        ):
+            return path
+    return None
+
+
+# Resolve an exact native identity, never a recent session sharing its cwd.
 _NATIVE_SEED_TRANSCRIPTS: dict[str, Callable[[str, str], Path | None]] = {
     "claude": session_query.build_claude_transcript_path,
+    "codex": _find_codex_transcript,
 }
 
 
@@ -137,7 +157,7 @@ async def seed_session_from_native_id(
         return False
 
     for cwd in _native_seed_cwds(w, identity):
-        transcript_path = derive(session_id, cwd)
+        transcript_path = await asyncio.to_thread(derive, session_id, cwd)
         if transcript_path is None or not await asyncio.to_thread(
             transcript_path.is_file
         ):

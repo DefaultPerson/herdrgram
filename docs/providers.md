@@ -104,6 +104,13 @@ Claude task state is derived from the transcript, not from terminal footer scrap
 
 Codex CLI supports feature-flagged hooks. Install ccgram's lifecycle hooks with `ccgram hook --provider codex --install`; ccgram writes user-level `~/.codex/hooks.json` entries for `SessionStart` and `Stop` and enables `[features].hooks = true` in `~/.codex/config.toml`. Transcript discovery remains as fallback and as the source of message truth.
 
+For Herdr with Codex 0.161+, set `CCGRAM_CODEX_COMMAND=codex --no-daemon`
+in the bot's `.env` and run `herdr integration install codex`. For desktop
+launches, source `scripts/codex-herdr.sh` from your `~/.bash_aliases`; it applies
+`--no-daemon` only inside Herdr. Start a new shell or source the file in an
+existing one. This keeps hooks in the launching pane's environment. The first
+prompt creates the native session identity used to offer its Telegram topic.
+
 ### Interactive Prompts
 
 Codex interactive prompts (question lists, permission prompts, and other selection UIs) are detected from terminal screen content via pyte and shown with inline keyboard controls.

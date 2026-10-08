@@ -319,6 +319,10 @@ def _parse_custom_tool_call_output(
             output_text = raw_output.strip()
     elif isinstance(raw_output, dict) and "output" in raw_output:
         output_text = str(raw_output["output"]).strip()
+    elif isinstance(raw_output, list):
+        output_text = "\n".join(
+            text for block in raw_output if (text := _extract_text_blocks([block]))
+        ).strip()
 
     if raw_name and output_text:
         output_text = _format_codex_tool_result(raw_name, output_text)

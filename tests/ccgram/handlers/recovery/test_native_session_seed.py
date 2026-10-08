@@ -10,6 +10,7 @@ into the entry the hook never wrote.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -53,6 +54,26 @@ def _transcript(session_id: str = SESSION, cwd: str = CWD) -> Path:
     path = config.claude_projects_path / cwd.replace("/", "-") / f"{session_id}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('{"type": "user"}\n')
+    return path
+
+
+def _codex_transcript(
+    codex_home: Path,
+    session_id: str = SESSION,
+    metadata: dict[str, object] | None = None,
+) -> Path:
+    path = (
+        codex_home / "sessions" / "2026" / "01" / "01" / f"rollout-{session_id}.jsonl"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, object] = {
+        "id": session_id,
+        "cwd": CWD,
+        "originator": "codex_cli_rs",
+        "source": "cli",
+    }
+    payload.update(metadata or {})
+    path.write_text(json.dumps({"type": "session_meta", "payload": payload}) + "\n")
     return path
 
 
@@ -120,6 +141,89 @@ async def test_seeded_entry_never_asks_for_a_replay(mgr: SessionManager) -> None
     assert await seed_session_from_native_id(TARGET, _herdr_window(), None) is True
 
     assert "replay_from_start" not in _map_entry()
+
+
+async def test_codex_seeds_exact_native_session_despite_newer_same_cwd_session(
+    mgr: SessionManager, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    codex_home = tmp_path / "custom-codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    transcript = _codex_transcript(codex_home)
+    competing = _codex_transcript(codex_home, OLD_SESSION)
+    os.utime(transcript, (1, 1))
+    os.utime(competing, (2, 2))
+
+    seeded = await seed_session_from_native_id(
+        TARGET, _herdr_window(native_agent="codex"), None
+    )
+
+    assert seeded is True
+    assert mgr.window_states[TARGET].session_id == SESSION
+    assert mgr.window_states[TARGET].provider_name == "codex"
+    assert _map_entry()["transcript_path"] == str(transcript)
+    assert _map_entry()["provider_name"] == "codex"
+    assert "replay_from_start" not in _map_entry()
+
+
+async def test_codex_seed_uses_default_home_when_codex_home_is_unset(
+    mgr: SessionManager, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    transcript = _codex_transcript(tmp_path / ".codex")
+
+    assert (
+        await seed_session_from_native_id(
+            TARGET, _herdr_window(native_agent="codex"), None
+        )
+        is True
+    )
+    assert _map_entry()["transcript_path"] == str(transcript)
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"id": OLD_SESSION},
+        {"cwd": "/another/project"},
+        {"source": {"subagent": {"thread_spawn": {"parent_thread_id": OLD_SESSION}}}},
+        {"originator": "codex_exec"},
+    ],
+    ids=["mismatched-id", "mismatched-cwd", "subagent", "noninteractive-exec"],
+)
+async def test_codex_seed_rejects_a_filename_without_matching_primary_metadata(
+    mgr: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    metadata: dict[str, object],
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    _codex_transcript(tmp_path, metadata=metadata)
+
+    assert (
+        await seed_session_from_native_id(
+            TARGET, _herdr_window(native_agent="codex"), None
+        )
+        is False
+    )
+    assert TARGET not in mgr.window_states
+    assert not config.session_map_file.exists()
+
+
+async def test_codex_seed_does_not_attach_a_different_session_in_the_same_cwd(
+    mgr: SessionManager, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    _codex_transcript(tmp_path, OLD_SESSION)
+
+    assert (
+        await seed_session_from_native_id(
+            TARGET, _herdr_window(native_agent="codex"), None
+        )
+        is False
+    )
+    assert TARGET not in mgr.window_states
+    assert not config.session_map_file.exists()
 
 
 async def test_re_seeds_when_the_backend_reports_a_different_session(
@@ -219,11 +323,11 @@ async def test_no_op_on_a_backend_that_publishes_no_native_session_id(
 async def test_no_op_for_an_agent_whose_transcript_is_not_derivable(
     mgr: SessionManager,
 ) -> None:
-    """Codex names its files by its own scheme; the hookless scan owns it."""
+    """Gemini still relies on its provider's discovery path."""
     _transcript()
 
     seeded = await seed_session_from_native_id(
-        TARGET, _herdr_window(native_agent="codex"), None
+        TARGET, _herdr_window(native_agent="gemini"), None
     )
 
     assert seeded is False
