@@ -31,7 +31,7 @@ def _is_hook_installed(settings: dict) -> bool:
 
 
 def _expected_module_command() -> str:
-    return f"{shlex.quote(sys.executable)} -m ccgram.main hook"
+    return f"{shlex.quote(sys.executable)} -I -m ccgram.main hook"
 
 
 class TestCodexFeatureFlag:
@@ -175,6 +175,10 @@ class TestInstallHook:
         [
             pytest.param("ccgram hook 2>/dev/null || true", id="shell-wrapped"),
             pytest.param("/usr/local/bin/ccgram hook", id="absolute-path"),
+            pytest.param(
+                f"{shlex.quote(sys.executable)} -m ccgram.main hook",
+                id="non-isolated-module",
+            ),
         ],
     )
     def test_install_rewrites_an_existing_ccgram_command_in_place(

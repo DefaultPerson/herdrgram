@@ -391,6 +391,15 @@ async def stop_miniapp_if_enabled() -> None:
 
 def main() -> None:
     """Main entry point — dispatches via Click CLI group."""
+    # Running agent sessions may retain the old, non-isolated hook command.
+    # Re-exec before loading hook dependencies so their cwd/PYTHONPATH cannot
+    # shadow our packages. stdin and the multiplexer environment are preserved.
+    if sys.argv[1:2] == ["hook"] and not sys.flags.isolated:
+        os.execv(
+            sys.executable,
+            [sys.executable, "-I", "-m", "ccgram.main", *sys.argv[1:]],
+        )
+
     # Lazy: main runs `ccgram` startup; defer imports until the relevant subcommand executes
     from .cli import cli
 

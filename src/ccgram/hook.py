@@ -120,16 +120,16 @@ def _gemini_settings_file() -> Path:
 
 
 def _current_hook_command(provider_name: str = "claude") -> str:
-    """Build the hook command bound to the current Python interpreter."""
-    command = f"{shlex.quote(sys.executable)} -m ccgram.main hook"
+    """Bind hooks to our interpreter, excluding the agent's Python import paths."""
+    command = f"{shlex.quote(sys.executable)} -I -m ccgram.main hook"
     if provider_name != "claude":
         command += f" --provider {shlex.quote(provider_name)}"
     return command
 
 
 def _is_current_hook_command(command: str) -> bool:
-    """Return True when the command matches the current module-based hook style."""
-    return _CURRENT_HOOK_MARKER in command
+    """Return True for the current isolated Claude hook invocation."""
+    return command == _current_hook_command()
 
 
 def _is_any_ccgram_hook_command(command: str) -> bool:
