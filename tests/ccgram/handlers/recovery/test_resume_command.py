@@ -806,15 +806,27 @@ def pick_env():
         patch(f"{_RC}.safe_edit", new_callable=AsyncMock) as edit,
         patch(f"{_RC}.get_thread_id", return_value=42),
         patch(f"{_RC}.Path") as path,
+        patch(f"{_RC}.topic_orchestration") as orchestration,
+        patch(f"{_RC}.backfill_new_topic", new_callable=AsyncMock) as backfill,
     ):
         router.get_window_for_thread.return_value = None
+        router.get_thread_for_window.return_value = None
         router.resolve_chat_id.return_value = -100999
         tmux.create_window = AsyncMock(
             return_value=(True, "Window created", "project", "@5")
         )
+        tmux.list_windows = AsyncMock(return_value=[])
         sync.wait_for_session_map_entry = AsyncMock()
         path.return_value.is_dir.return_value = True
-        yield SimpleNamespace(tmux=tmux, router=router, sync=sync, edit=edit, path=path)
+        yield SimpleNamespace(
+            tmux=tmux,
+            router=router,
+            sync=sync,
+            edit=edit,
+            path=path,
+            orchestration=orchestration,
+            backfill=backfill,
+        )
 
 
 async def _pick(index: int, sessions: list[dict], ctx: MagicMock) -> AsyncMock:
@@ -849,11 +861,59 @@ class TestResumePickCallback:
             launch_command="claude",
         )
         pick_env.sync.wait_for_session_map_entry.assert_awaited_once_with(
-            "@5", timeout=5.0, resolve_window_id=resolve_alias
+            "@5", timeout=30.0, resolve_window_id=resolve_alias
         )
         pick_env.router.bind_thread.assert_called_once_with(
             100, 42, "@canonical", window_name="project"
         )
+
+    async def test_pick_guards_the_new_window_until_it_is_bound(self, pick_env) -> None:
+        """Discovery must not offer the resumed pane a topic of its own."""
+        with patch(
+            f"{_RC}.window_query.resolve_window_alias", return_value="@canonical"
+        ):
+            await _pick(0, [_session()], _make_context())
+
+        orchestration = pick_env.orchestration
+        orchestration.pending_creation_transaction.assert_called_once()
+        orchestration.register_pending_creation.assert_any_call("@5", ttl_s=60.0)
+        orchestration.register_pending_creation.assert_any_call("@canonical")
+        orchestration.clear_pending_creation.assert_any_call("@5")
+        orchestration.clear_pending_creation.assert_called_with("@canonical")
+
+    async def test_pick_of_a_live_session_binds_its_window(self, pick_env) -> None:
+        """A session still open is followed, not started a second time."""
+        live = SimpleNamespace(
+            window_id="@7", window_name="skin", native_session_id=_SID
+        )
+        pick_env.tmux.list_windows = AsyncMock(return_value=[live])
+        ctx = _make_context()
+
+        query = await _pick(0, [_session(_SID)], ctx)
+
+        pick_env.tmux.create_window.assert_not_called()
+        pick_env.router.bind_thread.assert_called_once_with(
+            100, 42, "@7", window_name="skin", chat_id=ANY
+        )
+        pick_env.backfill.assert_awaited_once_with(ANY, -100999, 42, "@7")
+        assert RESUME_SESSIONS not in ctx.user_data
+        assert _toast(query) == "Bound"
+
+    async def test_pick_of_a_session_open_in_another_topic_is_refused(
+        self, pick_env
+    ) -> None:
+        live = SimpleNamespace(
+            window_id="@7", window_name="skin", native_session_id=_SID
+        )
+        pick_env.tmux.list_windows = AsyncMock(return_value=[live])
+        pick_env.router.get_thread_for_window.return_value = 77
+
+        query = await _pick(0, [_session(_SID)], _make_context())
+
+        pick_env.tmux.create_window.assert_not_called()
+        pick_env.router.bind_thread.assert_not_called()
+        assert "another topic" in pick_env.edit.call_args.args[1]
+        assert _toast(query) == "Open elsewhere"
 
     async def test_pick_unbinds_the_dead_window_first(self, pick_env) -> None:
         pick_env.router.get_window_for_thread.return_value = "@0"
