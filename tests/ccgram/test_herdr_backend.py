@@ -1324,6 +1324,27 @@ async def test_duplicate_live_targets_are_quarantined_without_hiding_others() ->
     assert await manager.find_window_by_id(_target("other")) is not None
 
 
+async def test_a_session_resumed_twice_keeps_other_topics_reconciled() -> None:
+    """Two panes on one session leave that target live but unaddressable.
+
+    That is what resuming an open session produces. It must not make liveness
+    unknown for every other topic, and it must never be offered a topic.
+    """
+    first = _agent(pane_id="w9:p1", tab_id="w9:t1", value="same")
+    second = _agent(pane_id="w9:p3", tab_id="w9:t3", value="same")
+    unrelated = _agent(pane_id="w9:p2", tab_id="w9:t2", value="other")
+    manager = _manager(_live_fake(first, second, unrelated))
+
+    windows = await manager.list_windows_for_reconciliation()
+
+    assert windows is not None
+    by_id = {window.window_id: window for window in windows}
+    assert set(by_id) == {_target("same"), _target("other")}
+    assert by_id[_target("same")].topic_eligible is False
+    assert await manager.find_window_by_id(_target("same")) is None
+    assert await manager.find_window_by_id(_target("other")) is not None
+
+
 async def test_distinct_targets_on_one_pane_are_quarantined() -> None:
     first = _agent(pane_id="w9:p1", tab_id="w9:t1", value="first")
     second = _agent(pane_id="w9:p1", tab_id="w9:t1", value="second")

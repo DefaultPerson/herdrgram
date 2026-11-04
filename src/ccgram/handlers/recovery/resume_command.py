@@ -53,16 +53,24 @@ from ..callback_helpers import get_thread_id
 from ..callback_registry import register
 from ..messaging_pipeline.message_sender import safe_edit, safe_reply
 from ..status.topic_emoji import format_topic_name_for_mode
+from ..topics import topic_orchestration
+from ..topics.topic_backfill import backfill_new_topic
 from ..user_state import RESUME_SESSIONS
 
 if TYPE_CHECKING:
     from telegram.ext import ContextTypes
 
+    from ...multiplexer.base import WindowRef
     from ...providers.base import AgentProvider
 
 logger = structlog.get_logger()
 
 _SESSIONS_PER_PAGE = 6
+
+# How long a resumed session gets to report itself through its hook. Loading a
+# long transcript takes Claude well past the old five seconds, and a topic bound
+# to the id minted before that report was left following nothing.
+_RESUME_REGISTER_TIMEOUT_S = 30.0
 
 
 @dataclass
@@ -389,22 +397,149 @@ async def _create_resume_window(
         from ..polling.polling_state import lifecycle_strategy
 
         lifecycle_strategy.clear_dead_notification(user_id, thread_id)
-    success, message, created_wname, created_wid = await tmux_manager.create_window(
-        cwd, agent_args=launch_args, launch_command=launch_command
-    )
+    # Same guard as /new: until the topic is bound, discovery must not take the
+    # new pane for a stray session and offer it a topic of its own.
+    with topic_orchestration.pending_creation_transaction():
+        (
+            success,
+            message,
+            created_wname,
+            created_wid,
+        ) = await tmux_manager.create_window(
+            cwd, agent_args=launch_args, launch_command=launch_command
+        )
+        if success:
+            topic_orchestration.register_pending_creation(
+                created_wid, ttl_s=_RESUME_REGISTER_TIMEOUT_S * 2
+            )
     if success:
         if provider.capabilities.supports_hook:
             await session_map_sync.wait_for_session_map_entry(
                 created_wid,
-                timeout=5.0,
+                timeout=_RESUME_REGISTER_TIMEOUT_S,
                 resolve_window_id=window_query.resolve_window_alias,
             )
-        created_wid = window_query.resolve_window_alias(created_wid)
+        created_wid = _follow_supersession(created_wid)
         session_manager.set_window_origin(created_wid, CCGRAM_CREATED_WINDOW_ORIGIN)
         session_manager.set_window_provider(created_wid, provider.capabilities.name)
         session_manager.set_window_approval_mode(created_wid, approval_mode)
 
     return success, message, created_wname, created_wid
+
+
+def _follow_supersession(window_id: str) -> str:
+    """The id the created window answers to now, carrying the creation guard."""
+    current = window_query.resolve_window_alias(window_id)
+    if current != window_id:
+        topic_orchestration.register_pending_creation(current)
+        topic_orchestration.clear_pending_creation(window_id)
+    return current
+
+
+async def _find_live_window(session_id: str) -> WindowRef | None:
+    """The live window already running *session_id*, if there is one.
+
+    Resuming a session that is still open would start a second agent on the
+    same transcript. Herdr then reports two panes with one identity, and that
+    target becomes unaddressable from either.
+    """
+    for window in await tmux_manager.list_windows():
+        if (
+            window.native_session_id == session_id
+            or window_query.get_session_id_for_window(window.window_id) == session_id
+        ):
+            return window
+    return None
+
+
+async def _rename_resumed_topic(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    thread_id: int,
+    window_name: str,
+    window_id: str,
+) -> None:
+    client = PTBTelegramClient(context.bot)
+    chat_id = thread_router.resolve_chat_id(user_id, thread_id)
+    topic_name = format_topic_name_for_mode(
+        window_name, window_query.get_approval_mode(window_id)
+    )
+    try:
+        await client.edit_forum_topic(
+            chat_id=chat_id,
+            message_thread_id=thread_id,
+            name=topic_name,
+        )
+        remember_title(chat_id, thread_id, topic_name)
+    except TelegramError as e:
+        logger.debug("Failed to rename topic: %s", e)
+
+
+async def _bind_live_window(
+    query: CallbackQuery,
+    user_id: int,
+    thread_id: int,
+    window: WindowRef,
+    picked: dict,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Point the topic at the pane already running the picked session."""
+    bound_thread = thread_router.get_thread_for_window(user_id, window.window_id)
+    _clear_resume_state(context.user_data)
+    if bound_thread == thread_id:
+        await safe_edit(query, "\u2705 This topic already follows that session.")
+        await query.answer("Already here")
+        return
+    if bound_thread is not None:
+        await safe_edit(
+            query,
+            "\u274c That session is already open in another topic. Continue it there.",
+        )
+        await query.answer("Open elsewhere")
+        return
+
+    if thread_router.get_window_for_thread(user_id, thread_id):
+        thread_router.unbind_thread(
+            user_id,
+            thread_id,
+            retirement_reason="system_replacement",
+            cleanup_eligible=True,
+        )
+    chat = query.message.chat if query.message else None
+    thread_router.bind_thread(
+        user_id,
+        thread_id,
+        window.window_id,
+        window_name=window.window_name,
+        chat_id=chat.id if chat else None,
+    )
+    if chat and chat.type in ("group", "supergroup"):
+        thread_router.set_group_chat_id(user_id, thread_id, chat.id)
+    provider_name = picked.get("provider_name", "")
+    if (
+        isinstance(provider_name, str)
+        and provider_name
+        and not window_query.get_window_provider(window.window_id)
+    ):
+        session_manager.set_window_provider(window.window_id, provider_name)
+
+    await _rename_resumed_topic(
+        context, user_id, thread_id, window.window_name, window.window_id
+    )
+    summary_short = picked.get("summary", "")[:40]
+    await safe_edit(
+        query,
+        f"\u2705 Already running, bound this topic to it: {summary_short}",
+    )
+    # A live session has history this topic never showed, unlike a resumed one
+    # whose topic was delivering it, so it gets the window picker's replay.
+    await backfill_new_topic(
+        PTBTelegramClient(context.bot),
+        thread_router.resolve_chat_id(user_id, thread_id),
+        thread_id,
+        window.window_id,
+    )
+    await query.answer("Bound")
 
 
 async def _handle_pick(
@@ -450,6 +585,11 @@ async def _handle_pick(
         await query.answer("Project gone")
         return
 
+    live = await _find_live_window(session_id)
+    if live is not None:
+        await _bind_live_window(query, user_id, thread_id, live, picked, context)
+        return
+
     success, message, created_wname, created_wid = await _create_resume_window(
         user_id,
         thread_id,
@@ -466,27 +606,14 @@ async def _handle_pick(
     thread_router.bind_thread(
         user_id, thread_id, created_wid, window_name=created_wname
     )
+    topic_orchestration.clear_pending_creation(created_wid)
 
     # Store group chat_id for routing
     chat = query.message.chat if query.message else None
     if chat and chat.type in ("group", "supergroup"):
         thread_router.set_group_chat_id(user_id, thread_id, chat.id)
 
-    # Rename topic to match the window
-    client = PTBTelegramClient(context.bot)
-    chat_id = thread_router.resolve_chat_id(user_id, thread_id)
-    topic_name = format_topic_name_for_mode(
-        created_wname, window_query.get_approval_mode(created_wid)
-    )
-    try:
-        await client.edit_forum_topic(
-            chat_id=chat_id,
-            message_thread_id=thread_id,
-            name=topic_name,
-        )
-        remember_title(chat_id, thread_id, topic_name)
-    except TelegramError as e:
-        logger.debug("Failed to rename topic: %s", e)
+    await _rename_resumed_topic(context, user_id, thread_id, created_wname, created_wid)
 
     summary_short = picked.get("summary", "")[:40]
     await safe_edit(

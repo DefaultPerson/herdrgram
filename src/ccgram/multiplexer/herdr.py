@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import hashlib
 import json
 import os
@@ -413,6 +414,28 @@ def _quarantine_ambiguous_records(
     return safe, len(duplicate_targets), len(duplicate_panes)
 
 
+def _duplicated_target_representatives(
+    records: Sequence[HerdrLiveRecord],
+) -> list[HerdrLiveRecord]:
+    """One record per target that several distinct panes share.
+
+    Two panes resuming the same Claude session report one target: it is live,
+    only not addressable. Returns nothing while any pane is itself ambiguous,
+    since then no record can be trusted to say which target a pane holds.
+    """
+    pane_counts = Counter(record.pane_id for record in records)
+    if any(count > 1 for count in pane_counts.values()):
+        return []
+    target_counts = Counter(record.target_id for record in records)
+    seen: set[str] = set()
+    representatives: list[HerdrLiveRecord] = []
+    for record in records:
+        if target_counts[record.target_id] > 1 and record.target_id not in seen:
+            seen.add(record.target_id)
+            representatives.append(record)
+    return representatives
+
+
 class HerdrManager:
     """Herdr backend satisfying the ``Multiplexer`` Protocol.
 
@@ -610,17 +633,22 @@ class HerdrManager:
         live. Anything answering "does this window still exist" must take
         ``_agent_list_snapshot_checked`` instead.
         """
-        records, _complete = await self._agent_list_snapshot_checked()
+        records, _complete, _shared = await self._agent_list_snapshot_checked()
         return records
 
     async def _agent_list_snapshot_checked(
         self,
-    ) -> tuple[list[HerdrLiveRecord], bool]:
-        """The safe records, plus whether they account for every live agent.
+    ) -> tuple[list[HerdrLiveRecord], bool, list[HerdrLiveRecord]]:
+        """The safe records, whether the listing is complete, and shared targets.
 
-        ``False`` when malformed or ambiguous records were quarantined: those
-        panes are live, ccgram may hold bindings to them, and they are absent
-        from the subset returned here. Reporting that subset as complete makes
+        A target several panes share (the same session resumed twice) is live
+        but unaddressable: it comes back once in the third element, and the
+        listing still counts as complete, so one duplicate no longer turns
+        liveness unknown for every other topic.
+
+        ``False`` when malformed records or a pane claimed by several targets
+        were quarantined: those panes are live, ccgram may hold bindings to
+        them, and they are absent from the subset returned here. Reporting that subset as complete makes
         such a binding look like a ghost, which the audit, the polling loop and
         the destructive guards all act on.
 
@@ -653,8 +681,12 @@ class HerdrManager:
                 duplicate_target_count=duplicate_targets,
                 duplicate_pane_count=duplicate_panes,
             )
-        complete = not (malformed or duplicate_targets or duplicate_panes)
-        return safe, complete
+        complete = not (malformed or duplicate_panes)
+        return (
+            safe,
+            complete,
+            (_duplicated_target_representatives(records) if duplicate_targets else []),
+        )
 
     def target_id_for_live_record(self, record: Mapping[str, object]) -> str | None:
         """Return an opaque target for one structurally valid live record."""
@@ -936,7 +968,7 @@ class HerdrManager:
         different questions, so this answers the first and stamps the second.
         """
         try:
-            records, complete = await self._agent_list_snapshot_checked()
+            records, complete, shared = await self._agent_list_snapshot_checked()
             if not complete:
                 # Quarantined records are live panes missing from this subset,
                 # so it cannot answer what exists. Saying so beats handing back
@@ -945,9 +977,18 @@ class HerdrManager:
                     "herdr agent.list incomplete; reporting liveness unknown"
                 )
                 return None
-            return await self._project_live_refs(
+            refs = await self._project_live_refs(
                 records, include_internal=True, include_unlabeled=True
             )
+            # Live but never adoptable: a topic offered for a shared target
+            # could address neither pane.
+            refs += [
+                dataclasses.replace(ref, topic_eligible=False)
+                for ref in await self._project_live_refs(
+                    shared, include_internal=True, include_unlabeled=True
+                )
+            ]
+            return refs
         except HerdrError:
             return None
 

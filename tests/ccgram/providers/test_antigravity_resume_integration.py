@@ -159,6 +159,9 @@ class TestProviderScopedResumeLaunch:
             return_value=(True, "created", "project", "@9")
         )
         monkeypatch.setattr(resume_command, "tmux_manager", tmux_manager)
+        # The creation guard is released by the pick flow after binding, which
+        # this direct call never reaches; the real one would outlive the test.
+        monkeypatch.setattr(resume_command, "topic_orchestration", MagicMock())
         monkeypatch.setattr(
             resume_command.thread_router,
             "get_window_for_thread",
