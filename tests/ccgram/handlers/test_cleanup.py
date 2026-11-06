@@ -6,7 +6,12 @@ import pytest
 from telegram.error import BadRequest
 
 from ccgram.config import config
-from ccgram.handlers.cleanup import clear_topic_state, close_command, rollback_command
+from ccgram.handlers.cleanup import (
+    clear_topic_state,
+    close_command,
+    kill_command,
+    rollback_command,
+)
 
 
 class TestClearTopicState:
@@ -279,4 +284,77 @@ class TestCloseCommand:
             await close_command(_close_update(), MagicMock())
 
         env.client.close_forum_topic.assert_not_awaited()
+        env.tr.unbind_thread.assert_not_called()
+
+
+# ── /kill ─────────────────────────────────────────────────────────────────
+
+
+@contextmanager
+def _kill_env(window_id: str | None, *, presence=True, killed=True, **close_kwargs):
+    """/close's seam plus the multiplexer the session is ended in."""
+    with (
+        _close_env(window_id, **close_kwargs) as env,
+        patch(
+            "ccgram.handlers.cleanup.window_presence",
+            AsyncMock(return_value=presence),
+        ) as present,
+        patch("ccgram.handlers.cleanup.tmux_manager") as mux,
+    ):
+        mux.kill_window = AsyncMock(return_value=killed)
+        env.mux = mux
+        env.present = present
+        yield env
+
+
+class TestKillCommand:
+    async def test_ends_the_session_then_removes_the_topic(self) -> None:
+        refusal = BadRequest("the chat is not a supergroup forum")
+        with _kill_env("@7", close_result=refusal) as env:
+            await kill_command(_close_update(), MagicMock())
+
+        env.mux.kill_window.assert_awaited_once_with("@7")
+        # The window is gone, so its session-scoped state goes too.
+        assert env.clear.await_args.kwargs.get("window_dead", True) is True
+        env.tr.unbind_thread.assert_called_once()
+        env.client.delete_forum_topic.assert_awaited_once()
+        assert "Session ended: spreads" in env.send.await_args.args[2]
+
+    async def test_failed_kill_changes_nothing(self) -> None:
+        with _kill_env("@7", killed=False) as env:
+            await kill_command(_close_update(), MagicMock())
+
+        env.tr.unbind_thread.assert_not_called()
+        env.client.close_forum_topic.assert_not_awaited()
+        assert "Could not end" in env.reply.await_args.args[1]
+
+    async def test_unreachable_multiplexer_changes_nothing(self) -> None:
+        with _kill_env("@7", presence=None) as env:
+            await kill_command(_close_update(), MagicMock())
+
+        env.mux.kill_window.assert_not_awaited()
+        env.tr.unbind_thread.assert_not_called()
+        assert "Could not reach" in env.reply.await_args.args[1]
+
+    async def test_window_already_gone_still_retires_the_topic(self) -> None:
+        with _kill_env("@7", presence=False) as env:
+            await kill_command(_close_update(), MagicMock())
+
+        env.mux.kill_window.assert_not_awaited()
+        env.tr.unbind_thread.assert_called_once()
+        env.client.close_forum_topic.assert_awaited_once()
+
+    async def test_unbound_topic_points_to_close(self) -> None:
+        with _kill_env(None) as env:
+            await kill_command(_close_update(), MagicMock())
+
+        env.present.assert_not_awaited()
+        env.client.close_forum_topic.assert_not_awaited()
+        assert "/close" in env.reply.await_args.args[1]
+
+    async def test_unauthorized_user_is_ignored(self) -> None:
+        with _kill_env("@7", allowed=False) as env:
+            await kill_command(_close_update(), MagicMock())
+
+        env.mux.kill_window.assert_not_awaited()
         env.tr.unbind_thread.assert_not_called()

@@ -9,6 +9,7 @@ Functions:
   - clear_topic_state: Clean up all memory state for a specific topic
   - unbind_command: release a topic's binding, leaving the topic in place
   - close_command: release the binding and remove the topic from Telegram
+  - kill_command: end the session in the multiplexer, then do the same
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
     from telegram.ext import ContextTypes
 
 from ..config import config
+from ..multiplexer import multiplexer as tmux_manager
+from ..multiplexer.reconciliation import window_presence
 from ..session_map import session_map_prefix
 from ..thread_router import thread_router
 from ..window_state_ports import legacy_state
@@ -257,6 +260,48 @@ async def _remove_topic(
     return True, True, None
 
 
+async def _command_topic(
+    update: Update,
+) -> tuple[int, int, int | None, str | None, str] | None:
+    """Resolve the topic a /close or /kill was sent in.
+
+    Returns ``(user_id, thread_id, chat_id, window_id, name)``, or None once it
+    has answered the update itself: an unauthorized user, General, or a
+    message outside any topic.
+    """
+    user = update.effective_user
+    if not user or not config.is_user_allowed(user.id):
+        return None
+    if not update.message:
+        return None
+
+    thread_id = get_thread_id(update)
+    if thread_id is None:
+        if update.effective_chat and is_general_topic(update.message):
+            await handle_general_topic_message(
+                update.get_bot(), update.message, update.effective_chat.id
+            )
+        else:
+            await safe_reply(update.message, CLOSE_NOT_IN_TOPIC)
+        return None
+
+    raw_chat_id = update.effective_chat.id if update.effective_chat else None
+    chat_id = raw_chat_id if isinstance(raw_chat_id, int) else None
+    window_id = (
+        thread_router.get_window_for_thread(user.id, thread_id, chat_id)
+        if chat_id is not None
+        else thread_router.get_window_for_thread(user.id, thread_id)
+    )
+    display = thread_router.get_display_name(window_id) if window_id else ""
+    return (
+        user.id,
+        thread_id,
+        chat_id,
+        window_id,
+        display or window_id or str(thread_id),
+    )
+
+
 async def close_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /close — retire this topic in Telegram without ending the session.
 
@@ -268,51 +313,27 @@ async def close_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     Telegram supports no other removal. Discovery sees an unbound live window
     within a poll cycle and offers it again in General.
     """
-    user = update.effective_user
-    if not user or not config.is_user_allowed(user.id):
+    target = await _command_topic(update)
+    if target is None:
         return
-    if not update.message:
-        return
-
-    thread_id = get_thread_id(update)
-    if thread_id is None:
-        if (
-            update.message
-            and update.effective_chat
-            and is_general_topic(update.message)
-        ):
-            await handle_general_topic_message(
-                update.get_bot(), update.message, update.effective_chat.id
-            )
-        else:
-            await safe_reply(update.message, CLOSE_NOT_IN_TOPIC)
-        return
-
-    raw_chat_id = update.effective_chat.id if update.effective_chat else None
-    chat_id = raw_chat_id if isinstance(raw_chat_id, int) else None
-    window_id = (
-        thread_router.get_window_for_thread(user.id, thread_id, chat_id)
-        if chat_id is not None
-        else thread_router.get_window_for_thread(user.id, thread_id)
-    )
+    user_id, thread_id, chat_id, window_id, name = target
+    assert update.message is not None  # checked by _command_topic
     client = PTBTelegramClient(context.bot)
-    display = thread_router.get_display_name(window_id) if window_id else ""
-    name = display or window_id or str(thread_id)
 
     if window_id:
-        await enqueue_status_update(client, user.id, window_id, None, thread_id)
+        await enqueue_status_update(client, user_id, window_id, None, thread_id)
         clear_kwargs: dict = {"window_id": window_id, "window_dead": False}
         if chat_id is not None:
             clear_kwargs["chat_id"] = chat_id
         await clear_topic_state(
-            user.id, thread_id, client, context.user_data, **clear_kwargs
+            user_id, thread_id, client, context.user_data, **clear_kwargs
         )
-        thread_router.unbind_thread(user.id, thread_id, chat_id=chat_id)
+        thread_router.unbind_thread(user_id, thread_id, chat_id=chat_id)
 
     target_chat_id = (
         chat_id
         if chat_id is not None
-        else thread_router.resolve_chat_id(user.id, thread_id)
+        else thread_router.resolve_chat_id(user_id, thread_id)
     )
     removed, deleted, error = await _remove_topic(client, target_chat_id, thread_id)
     if not removed:
@@ -328,10 +349,92 @@ async def close_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await safe_send(client, target_chat_id, f"{headline}\n{tail}")
     logger.info(
         "topic_retired_by_command",
-        user_id=user.id,
+        user_id=user_id,
         thread_id=thread_id,
         window_id=window_id or "",
         deleted=deleted,
+    )
+
+
+# ── /kill ─────────────────────────────────────────────────────────────────
+
+KILL_NO_BINDING = (
+    "❌ No session is bound to this topic. Use /close to remove the topic."
+)
+KILL_UNREACHABLE = (
+    "⚠ Could not reach the multiplexer, so `{name}` was left alone. "
+    "Nothing was killed or unbound."
+)
+KILL_FAILED = "⚠ Could not end `{name}`. Nothing was unbound."
+KILL_DONE = "💀 Session ended: {name}"
+KILL_TOPIC_KEPT = (
+    "💀 Session ended: {name}\n"
+    "Telegram would not remove this topic: {error}. Delete it by hand."
+)
+
+
+async def kill_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /kill — end this topic's session on the machine, then the topic.
+
+    /close's counterpart for when the session itself should go: the agent's
+    window is closed in the multiplexer first, and only a confirmed close (or
+    a window already gone) drops the binding and removes the topic. Presence
+    is read tri-state, as the /sessions kill does: an unreachable backend
+    changes nothing, since unbinding a session that survived would leave it
+    running with no way to reach it.
+    """
+    target = await _command_topic(update)
+    if target is None:
+        return
+    user_id, thread_id, chat_id, window_id, name = target
+    assert update.message is not None  # checked by _command_topic
+    if not window_id:
+        await safe_reply(update.message, KILL_NO_BINDING)
+        return
+
+    presence = await window_presence(window_id, tmux_manager)
+    if presence is None:
+        await safe_reply(update.message, KILL_UNREACHABLE.format(name=name))
+        return
+    if presence and not await tmux_manager.kill_window(window_id):
+        await safe_reply(update.message, KILL_FAILED.format(name=name))
+        return
+
+    client = PTBTelegramClient(context.bot)
+    await enqueue_status_update(client, user_id, window_id, None, thread_id)
+    clear_kwargs: dict = {"window_id": window_id}
+    if chat_id is not None:
+        clear_kwargs["chat_id"] = chat_id
+    await clear_topic_state(
+        user_id, thread_id, client, context.user_data, **clear_kwargs
+    )
+    target_chat_id = (
+        chat_id
+        if chat_id is not None
+        else thread_router.resolve_chat_id(user_id, thread_id)
+    )
+    thread_router.unbind_thread(
+        user_id,
+        thread_id,
+        chat_id=chat_id,
+        retirement_reason="stale_owned_binding",
+        cleanup_eligible=True,
+    )
+
+    removed, _deleted, error = await _remove_topic(client, target_chat_id, thread_id)
+    if removed:
+        await safe_send(client, target_chat_id, KILL_DONE.format(name=name))
+    else:
+        await safe_reply(
+            update.message, KILL_TOPIC_KEPT.format(name=name, error=error or "unknown")
+        )
+    logger.info(
+        "session_killed_by_command",
+        user_id=user_id,
+        thread_id=thread_id,
+        window_id=window_id,
+        was_present=presence,
+        topic_removed=removed,
     )
 
 
