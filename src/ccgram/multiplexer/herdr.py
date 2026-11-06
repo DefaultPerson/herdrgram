@@ -307,10 +307,11 @@ def herdr_session_target_id(composite: HerdrSessionComposite) -> str:
 _TERMINAL_FALLBACK_AGENTS = frozenset({"claude", "codex", "gemini"})
 
 # How long a target handed to topic creation stays eligible to be published as
-# superseded, and how many are remembered. Creation resolves within seconds;
-# the window is generous so a slow agent still converges, and bounded so a
-# long-lived process cannot accumulate them.
-_PROVISIONAL_TARGET_TTL_SECONDS = 300.0
+# superseded, and how many are remembered. A Claude session names itself within
+# seconds, but Codex names its session only on its first prompt, which for a
+# topic opened with /new is whenever the user first writes; bounded in count so
+# a long-lived process cannot accumulate them.
+_PROVISIONAL_TARGET_TTL_SECONDS = 24 * 3600.0
 _MAX_PROVISIONAL_TARGETS = 64
 
 

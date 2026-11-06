@@ -44,12 +44,15 @@ from .topic_creation_draft import (
 from . import topic_orchestration
 
 if TYPE_CHECKING:
-    from telegram import CallbackQuery
+    from telegram import CallbackQuery, Chat
     from telegram.ext import ContextTypes
 
 logger = structlog.get_logger()
 
 _YOLO_CREATION_GUARD_GRACE_S = 10.0
+# How long an agent that names its session on its first prompt gets to report
+# it once that prompt is delivered (model start-up plus the first turn).
+_FIRST_PROMPT_REGISTER_TIMEOUT_S = 30.0
 
 __all__ = [
     "WindowLaunchRequest",
@@ -445,17 +448,47 @@ async def launch_window(  # noqa: PLR0912, PLR0915, C901
             thread_router.set_group_chat_id(user_id, pending_thread_id, chat.id)
 
     provider = provider_registry.get(provider_name)
+    caps = provider.capabilities
+    pending_text = request.pending_text
+    # An agent that names its session on its first prompt never fires the hook
+    # this flow waits for until it is given that prompt, so it gets the pending
+    # text first. With nothing pending, the topic follows the stand-in target
+    # until the user's first message; the backend folds it into the named one.
+    deliver_first = (
+        caps.supports_hook is True
+        and caps.names_session_on_first_prompt is True
+        and caps.chat_first_command_path is not True
+    )
+    pending_delivered = False
     try:
-        if approval_mode == "yolo" and provider.capabilities.has_yolo_confirmation:
+        if approval_mode == "yolo" and caps.has_yolo_confirmation:
             await _accept_yolo_confirmation(created_wid)
 
-        map_entry_found = (
-            await session_map_sync.wait_for_session_map_entry(
+        if not caps.supports_hook or (deliver_first and not pending_text):
+            map_entry_found = True
+        elif deliver_first and pending_text:
+            await _forward_pending_text(
+                context, user_id, pending_thread_id, created_wid, pending_text, chat
+            )
+            pending_delivered = True
+            # The prompt is already in the agent: a slow first turn must not
+            # tear down the window holding it, so a miss is logged, not fatal.
+            map_entry_found = await session_map_sync.wait_for_session_map_entry(
+                created_wid,
+                timeout=_FIRST_PROMPT_REGISTER_TIMEOUT_S,
+                resolve_window_id=window_query.resolve_window_alias,
+            )
+            if not map_entry_found:
+                logger.warning(
+                    "Session %s not registered after its first prompt; "
+                    "keeping the window",
+                    created_wid,
+                )
+                map_entry_found = True
+        else:
+            map_entry_found = await session_map_sync.wait_for_session_map_entry(
                 created_wid, resolve_window_id=window_query.resolve_window_alias
             )
-            if provider.capabilities.supports_hook
-            else True
-        )
     except BaseException:
         created_wid = _follow_supersession(created_wid)
         if await tmux_manager.kill_window(created_wid):
@@ -518,19 +551,17 @@ async def launch_window(  # noqa: PLR0912, PLR0915, C901
         f"✅ {message}\n\nBound to this topic. Send messages here.",
     )
 
-    pending_text = request.pending_text
-    if pending_text:
+    if pending_text and not pending_delivered:
         logger.debug(
             "Forwarding pending text to window %s (len=%d)",
             created_wname,
             len(pending_text),
         )
-        if context.user_data is not None:
-            context.user_data.pop(PENDING_THREAD_TEXT, None)
-            context.user_data.pop(PENDING_THREAD_ID, None)
-
         # Chat-first providers (shell): route through NL→command approval flow
         if provider_caps.chat_first_command_path:
+            if context.user_data is not None:
+                context.user_data.pop(PENDING_THREAD_TEXT, None)
+                context.user_data.pop(PENDING_THREAD_ID, None)
             # Lazy: telegram_client wraps PTB Bot; shell.shell_commands
             # ↔ topics cycle through approval callback wiring.
             from ...telegram_client import PTBTelegramClient
@@ -547,29 +578,49 @@ async def launch_window(  # noqa: PLR0912, PLR0915, C901
                 chat_id=chat.id if chat else None,
             )
         else:
-            send_ok, send_msg = await send_telegram_to_window(
-                user_id,
-                created_wid,
-                pending_thread_id,
-                pending_text,
-                chat.id if chat else None,
+            await _forward_pending_text(
+                context, user_id, pending_thread_id, created_wid, pending_text, chat
             )
-            if not send_ok:
-                logger.warning(
-                    "Failed to forward pending text to window %s (user %s): %s",
-                    created_wid,
-                    user_id,
-                    send_msg,
-                )
-                # Lazy: telegram_client wraps PTB Bot.
-                from ...telegram_client import PTBTelegramClient
-
-                await safe_send(
-                    PTBTelegramClient(context.bot),
-                    thread_router.resolve_chat_id(user_id, pending_thread_id),
-                    f"❌ Failed to send pending message: {send_msg}",
-                    message_thread_id=pending_thread_id,
-                )
-    elif context.user_data is not None:
+    elif not pending_text and context.user_data is not None:
         context.user_data.pop(PENDING_THREAD_ID, None)
     return WindowLaunchResult(success=True, window_id=created_wid)
+
+
+async def _forward_pending_text(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    thread_id: int | None,
+    window_id: str,
+    text: str,
+    chat: Chat | None,
+) -> None:
+    """Type the text that opened the topic into its new window."""
+    if context.user_data is not None:
+        context.user_data.pop(PENDING_THREAD_TEXT, None)
+        context.user_data.pop(PENDING_THREAD_ID, None)
+    send_ok, send_msg = await send_telegram_to_window(
+        user_id,
+        window_id,
+        thread_id,
+        text,
+        chat.id if chat else None,
+    )
+    if send_ok:
+        return
+    logger.warning(
+        "Failed to forward pending text to window %s (user %s): %s",
+        window_id,
+        user_id,
+        send_msg,
+    )
+    if thread_id is None:
+        return
+    # Lazy: telegram_client wraps PTB Bot.
+    from ...telegram_client import PTBTelegramClient
+
+    await safe_send(
+        PTBTelegramClient(context.bot),
+        thread_router.resolve_chat_id(user_id, thread_id),
+        f"❌ Failed to send pending message: {send_msg}",
+        message_thread_id=thread_id,
+    )

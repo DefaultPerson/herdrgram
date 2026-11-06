@@ -146,6 +146,10 @@ class ProviderCapabilities:
     # gate shell-specific behavior without checking ``provider_name == "shell"``.
     chat_first_command_path: bool = False
     has_yolo_confirmation: bool = False
+    # When true, the agent creates its session (and fires SessionStart) only
+    # once it receives its first prompt, so window creation cannot wait for the
+    # hook before delivering anything: the wait would never end.
+    names_session_on_first_prompt: bool = False
     # When true, the provider maintains a per-window task-state model seeded
     # from transcript entries. Callers should invoke seed_task_state() on
     # session start and apply_task_entries() on each new batch.

@@ -606,6 +606,9 @@ class CodexProvider(JsonlProvider):
         supports_resume=True,
         supports_continue=True,
         supports_structured_transcript=True,
+        # Codex 0.16x writes no rollout and fires no SessionStart until the
+        # first prompt arrives.
+        names_session_on_first_prompt=True,
         builtin_commands=tuple(_CODEX_BUILTINS.keys()),
         supports_user_command_discovery=True,
         supports_status_snapshot=True,

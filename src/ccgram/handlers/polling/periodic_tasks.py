@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from ...config import config
+from ...session import session_manager
 from ...telegram_client import TelegramClient
 from ...utils import log_throttle_sweep
 from ..live.live_view import tick_live_views
@@ -43,7 +44,14 @@ async def run_periodic_tasks(
     all_windows: list["TmuxWindow"],
     timers: dict[str, float],
 ) -> None:
-    """Run time-gated periodic tasks (topic check, live view)."""
+    """Run time-gated periodic tasks (topic check, live view).
+
+    Every tick first folds superseded window ids, before the bound windows are
+    looked up: an agent that names its session after its topic was bound
+    (Codex, on its first prompt) would otherwise read as a dead window for the
+    cycle until the session monitor migrates the binding.
+    """
+    session_manager.reconcile_window_aliases(all_windows)
     now = time.monotonic()
 
     if now - timers["live_view"] >= config.live_view_interval:

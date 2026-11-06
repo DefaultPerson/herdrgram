@@ -270,6 +270,7 @@ def _launch_env(
     supports_hook: bool = False,
     has_yolo_confirmation: bool = False,
     chat_first_command_path: bool = False,
+    names_session_on_first_prompt: bool = False,
     launch_command: str = "claude",
 ) -> Iterator[_LaunchMocks]:
     """Patch launch_window's collaborators for a successful hookless launch.
@@ -303,6 +304,7 @@ def _launch_env(
             supports_hook=supports_hook,
             has_yolo_confirmation=has_yolo_confirmation,
             chat_first_command_path=chat_first_command_path,
+            names_session_on_first_prompt=names_session_on_first_prompt,
         )
         yield _LaunchMocks(
             mux=mux,
@@ -530,6 +532,77 @@ class TestLaunchWindowFailure:
         mock_safe_send.assert_awaited_once()
         assert "pane is gone" in mock_safe_send.call_args.args[2]
         assert mock_safe_send.call_args.kwargs == {"message_thread_id": 42}
+
+
+class TestLaunchWindowFirstPromptSession:
+    """Codex names its session (and fires SessionStart) only on its first prompt."""
+
+    async def test_pending_text_goes_in_before_the_hook_wait(self, tmp_path) -> None:
+        order: list[str] = []
+        user_data = {PENDING_THREAD_ID: 42, PENDING_THREAD_TEXT: "test"}
+
+        with (
+            _launch_env(supports_hook=True, names_session_on_first_prompt=True) as m,
+            patch(
+                f"{_MODULE}send_telegram_to_window",
+                new_callable=AsyncMock,
+                side_effect=lambda *a, **k: order.append("send") or (True, "ok"),
+            ) as mock_send,
+        ):
+
+            async def wait(*_args, **_kwargs):
+                order.append("wait")
+                return True
+
+            m.session_map.wait_for_session_map_entry = AsyncMock(side_effect=wait)
+            result = await launch_window(
+                _make_query(),
+                _make_context(user_data),
+                _request(cwd=str(tmp_path), provider_name="codex", pending_text="test"),
+            )
+
+        assert result.success
+        assert order == ["send", "wait"]  # sent once, and before the wait
+        mock_send.assert_awaited_once_with(100, "@5", 42, "test", ANY)
+        assert m.session_map.wait_for_session_map_entry.call_args.kwargs[
+            "timeout"
+        ] == pytest.approx(30.0)
+        assert PENDING_THREAD_TEXT not in user_data
+
+    async def test_no_pending_text_binds_without_waiting(self, tmp_path) -> None:
+        with _launch_env(supports_hook=True, names_session_on_first_prompt=True) as m:
+            result = await launch_window(
+                _make_query(),
+                _make_context({PENDING_THREAD_ID: 42}),
+                _request(cwd=str(tmp_path), provider_name="codex"),
+            )
+
+        assert result.success
+        m.session_map.wait_for_session_map_entry.assert_not_awaited()
+        m.mux.kill_window.assert_not_awaited()
+        m.router.bind_thread.assert_called_once()
+
+    async def test_slow_first_turn_keeps_the_window_holding_the_prompt(
+        self, tmp_path
+    ) -> None:
+        with (
+            _launch_env(supports_hook=True, names_session_on_first_prompt=True) as m,
+            patch(
+                f"{_MODULE}send_telegram_to_window",
+                new_callable=AsyncMock,
+                return_value=(True, "ok"),
+            ),
+        ):
+            m.session_map.wait_for_session_map_entry = AsyncMock(return_value=False)
+            result = await launch_window(
+                _make_query(),
+                _make_context({PENDING_THREAD_ID: 42, PENDING_THREAD_TEXT: "hi"}),
+                _request(cwd=str(tmp_path), provider_name="codex", pending_text="hi"),
+            )
+
+        assert result.success
+        m.mux.kill_window.assert_not_awaited()
+        m.router.unbind_thread.assert_not_called()
 
 
 # ── the confirmation dialogs Claude Code blocks a new session behind ────────

@@ -28,6 +28,7 @@ def _tasks(now: float):
         patch(_MODULE + "check_autoclose_timers", new_callable=AsyncMock) as autoclose,
         patch(_MODULE + "check_unbound_window_ttl", new_callable=AsyncMock) as unbound,
         patch(_MODULE + "log_throttle_sweep") as sweep,
+        patch(_MODULE + "session_manager") as session,
         patch(
             _MODULE + "reconcile_announcements", new_callable=AsyncMock
         ) as announcements,
@@ -42,6 +43,7 @@ def _tasks(now: float):
             unbound=unbound,
             sweep=sweep,
             announcements=announcements,
+            session=session,
         )
 
 
@@ -89,6 +91,20 @@ class TestRunPeriodicTasks:
 
         tasks.prune.assert_awaited_once_with(windows)
         tasks.probe.assert_awaited_once_with(client)
+
+    async def test_superseded_ids_are_folded_every_tick_before_the_rest(self):
+        """A session named after its topic was bound must not read as dead."""
+        timers = {"live_view": 0.0, "topic_check": 0.0}
+        windows = cast(list[WindowRef], [MagicMock()])
+        with _tasks(now=TOPIC_CHECK_INTERVAL) as tasks:
+            tasks.live.side_effect = lambda *_: (
+                tasks.session.reconcile_window_aliases.assert_called_once_with(windows)
+            )
+            await run_periodic_tasks(MagicMock(), windows, timers)
+            timers = {"live_view": 1e9, "topic_check": 1e9}
+            await run_periodic_tasks(MagicMock(), windows, timers)
+
+        assert tasks.session.reconcile_window_aliases.call_count == 2
 
 
 class TestRunLifecycleTasks:

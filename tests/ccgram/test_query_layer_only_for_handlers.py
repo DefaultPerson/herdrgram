@@ -43,6 +43,7 @@ import pytest
 #   prune_stale_state × 2
 #   prune_stale_window_states × 1
 #   audit_state × 3
+#   reconcile_window_aliases × 1
 ALLOWED_SESSION_MANAGER_ATTRS: frozenset[str] = frozenset(
     {
         "set_window_provider",
@@ -59,6 +60,7 @@ ALLOWED_SESSION_MANAGER_ATTRS: frozenset[str] = frozenset(
         "prune_stale_state",
         "prune_stale_window_states",
         "audit_state",
+        "reconcile_window_aliases",
     }
 )
 
