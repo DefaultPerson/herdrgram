@@ -300,8 +300,10 @@ def _kill_env(window_id: str | None, *, presence=True, killed=True, **close_kwar
             AsyncMock(return_value=presence),
         ) as present,
         patch("ccgram.handlers.cleanup.tmux_manager") as mux,
+        patch("ccgram.handlers.topics.topic_reopen.offer_reopen", AsyncMock()) as offer,
     ):
         mux.kill_window = AsyncMock(return_value=killed)
+        env.offer = offer
         env.mux = mux
         env.present = present
         yield env
@@ -318,7 +320,8 @@ class TestKillCommand:
         assert env.clear.await_args.kwargs.get("window_dead", True) is True
         env.tr.unbind_thread.assert_called_once()
         env.client.delete_forum_topic.assert_awaited_once()
-        assert "Session ended: spreads" in env.send.await_args.args[2]
+        env.offer.assert_awaited_once()
+        assert env.offer.await_args.kwargs["name"] == "spreads"
 
     async def test_failed_kill_changes_nothing(self) -> None:
         with _kill_env("@7", killed=False) as env:

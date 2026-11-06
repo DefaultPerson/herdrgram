@@ -108,6 +108,8 @@ _SINGLETON_ALLOWLIST = frozenset(
         "show_command.py",
         # /split resolves window_id via thread_router (same routing as /last, /panes).
         "split_command.py",
+        # /kill reopen resumes like /resume: waits on session_map_sync, binds via thread_router.
+        "topics/topic_reopen.py",
         "shell/shell_capture.py",
         "shell/shell_commands.py",
         # rc_probe iterates thread bindings to route the RC outcome reply

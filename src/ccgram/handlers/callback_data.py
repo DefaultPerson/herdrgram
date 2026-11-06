@@ -151,5 +151,9 @@ CB_AGENT_CANCEL = "ag:x:"  # ag:x:<window_id>
 CB_ANNOUNCE_OPEN = "an:open:"  # an:open:<token> — create and bind the topic
 CB_ANNOUNCE_HIDE = "an:hide:"  # an:hide:<token> — dismiss, never offer again
 
+# Reopen offer posted to General after /kill; the suffix is a token owned by
+# topics.topic_reopen, for the same 64-byte reason.
+CB_REOPEN = "ko:open:"  # ko:open:<token> — resume the session, open a topic
+
 # Idle status sentinel (shared between status_polling and message_queue)
 IDLE_STATUS_TEXT = "\u2713 Ready"

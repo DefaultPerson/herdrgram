@@ -30,6 +30,7 @@ from ..multiplexer import multiplexer as tmux_manager
 from ..multiplexer.reconciliation import window_presence
 from ..session_map import session_map_prefix
 from ..thread_router import thread_router
+from ..window_query import get_session_id_for_window, view_window
 from ..window_state_ports import legacy_state
 from ..topic_state_registry import topic_state
 from ..utils import handle_general_topic_message, is_general_topic, log_throttle_reset
@@ -366,7 +367,6 @@ KILL_UNREACHABLE = (
     "Nothing was killed or unbound."
 )
 KILL_FAILED = "⚠ Could not end `{name}`. Nothing was unbound."
-KILL_DONE = "💀 Session ended: {name}"
 KILL_TOPIC_KEPT = (
     "💀 Session ended: {name}\n"
     "Telegram would not remove this topic: {error}. Delete it by hand."
@@ -392,6 +392,11 @@ async def kill_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await safe_reply(update.message, KILL_NO_BINDING)
         return
 
+    # Read what a Reopen needs before the kill clears it with the window.
+    view = view_window(window_id)
+    session_id = (view.session_id if view else "") or (
+        get_session_id_for_window(window_id) or ""
+    )
     presence = await window_presence(window_id, tmux_manager)
     if presence is None:
         await safe_reply(update.message, KILL_UNREACHABLE.format(name=name))
@@ -423,7 +428,19 @@ async def kill_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     removed, _deleted, error = await _remove_topic(client, target_chat_id, thread_id)
     if removed:
-        await safe_send(client, target_chat_id, KILL_DONE.format(name=name))
+        # Lazy: topics.topic_reopen imports topic orchestration, which imports
+        # this module for its topic teardown.
+        from .topics.topic_reopen import offer_reopen
+
+        await offer_reopen(
+            client,
+            target_chat_id,
+            name=name,
+            session_id=session_id,
+            cwd=view.cwd if view else "",
+            provider=view.provider_name if view else "",
+            approval_mode=view.approval_mode if view else "normal",
+        )
     else:
         await safe_reply(
             update.message, KILL_TOPIC_KEPT.format(name=name, error=error or "unknown")
