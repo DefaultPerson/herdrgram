@@ -113,8 +113,15 @@ async def _create_forum_topic_with_retry(
             topic = await client.create_forum_topic(
                 chat_id=chat_id, name=topic_name, **extra
             )
-        except (TimedOut, NetworkError) as exc:
-            if isinstance(exc, BadRequest) and ICON_EMOJI_KEY in extra:
+        except BadRequest as exc:
+            # BadRequest inherits NetworkError in PTB, but an API refusal is
+            # not a transport failure. In particular BOT_TOPIC_WRONG_HOME
+            # can leave a creation notice behind even though creation failed.
+            if ICON_EMOJI_KEY in extra and str(exc).upper() in {
+                "TOPIC_ICON_INVALID",
+                "CUSTOM_EMOJI_INVALID",
+                "DOCUMENT_INVALID",
+            }:
                 logger.warning(
                     "Topic icon refused, creating the topic without one",
                     chat_id=chat_id,
@@ -123,6 +130,8 @@ async def _create_forum_topic_with_retry(
                 del extra[ICON_EMOJI_KEY]
                 icon_dropped = True
                 continue
+            raise
+        except (TimedOut, NetworkError) as exc:
             last_exc = exc
             attempt += 1
             if attempt <= _TOPIC_CREATE_TRANSIENT_RETRIES:

@@ -11,6 +11,7 @@ from ccgram.multiplexer.base import WindowRef
 from ccgram.handlers.topics import topic_icons
 from ccgram.handlers.topics.topic_icons import TOPIC_ICON_COLORS
 from ccgram.handlers.topics.topic_orchestration import (
+    _create_forum_topic_with_retry,
     collect_target_chats,
     _is_pending_user_creation,
     _is_window_already_bound,
@@ -658,6 +659,20 @@ class TestHandleNewWindow:
 
 
 class TestCreateForumTopicTransientRetry:
+    @pytest.mark.parametrize("with_icon", [False, True])
+    @pytest.mark.parametrize("error", ["BOT_TOPIC_WRONG_HOME", "CHAT_NOT_FOUND"])
+    async def test_api_refusal_does_not_repeat_creation(
+        self, with_icon: bool, error: str
+    ) -> None:
+        bot = AsyncMock()
+        bot.create_forum_topic.side_effect = BadRequest(error)
+        extra = {"icon_custom_emoji_id": "icon-1"} if with_icon else {}
+
+        with pytest.raises(BadRequest, match=error):
+            await _create_forum_topic_with_retry(bot, 12345, "tra", **extra)
+
+        bot.create_forum_topic.assert_awaited_once()
+
     async def test_timed_out_retries_then_succeeds(self) -> None:
         event = _make_event()
         bot = AsyncMock()
