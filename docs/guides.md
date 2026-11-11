@@ -241,7 +241,7 @@ All settings accept both CLI flags and environment variables. CLI flags take pre
 | `CCGRAM_ECHO_USER_MESSAGES`                          | `true`                         | Set `false` to drop the 👤 echo of text typed in the terminal (Telegram-sent text is unaffected)      |
 | `CCGRAM_HERDR_NOTIFY_ON_INJECT`                      | `false`                        | Set `true` to raise a silent desktop notification when a Telegram message lands in a pane (herdr)    |
 | `CCGRAM_TOPIC_NAME_DECORATIONS`                      | `true`                         | Set `false` for plain topic names: no status emoji, no RC/YOLO badge, no rename on a state change    |
-| `CCGRAM_TOPIC_RANDOM_ICON`                           | `false`                        | Set `true` to give every topic CCGram creates a random forum icon and colour                         |
+| `CCGRAM_TOPIC_RANDOM_ICON`                           | `true`                         | Every topic CCGram creates gets a random forum icon and colour; `false` turns it off                 |
 | `CCGRAM_TOPIC_ON_DEMAND`                             | `false`                        | Set `true` to offer a topic in General for each new session instead of creating one outright        |
 | `CCGRAM_TOPIC_BACKFILL_MESSAGES`                     | `0`                            | Messages replayed into any newly bound topic; `0` (upstream) replays none                            |
 | `CCGRAM_HERDR_REQUIRE_NATIVE_SESSION`                | `false`                        | Set `true` to wait for herdr to name an agent's session before adopting or offering it               |
@@ -291,9 +291,9 @@ Names still flow *into* Telegram. When the display name itself changes, because 
 
 Every topic CCGram creates carries Telegram's default icon, so a chat with a dozen agent topics is one grey column in the sidebar.
 
-Set `CCGRAM_TOPIC_RANDOM_ICON=true` and each topic CCGram creates gets a random icon from `getForumTopicIconStickers` — the emoji set every bot may use — plus one of the six `icon_color` values Telegram accepts. The sticker list is fetched once per process, and each chat prefers an icon it has not spent yet, so neighbouring topics rarely look alike; once every icon is taken, repeats resume.
+With `CCGRAM_TOPIC_RANDOM_ICON` on (the default) each topic CCGram creates gets a random icon from `getForumTopicIconStickers` — the emoji set every bot may use — plus one of the six `icon_color` values Telegram accepts. The sticker list is fetched once per process, and each chat prefers an icon it has not spent yet, so neighbouring topics rarely look alike; once every icon is taken, repeats resume.
 
-The icon is decoration and never costs a topic. If the icon list cannot be fetched, or the chat refuses a custom icon — a private-chat forum may — the topic is created with the random colour alone, and that chat is not offered a custom icon again for the rest of the run. Topics you create by hand in Telegram keep whatever icon you picked; this flag only governs the ones CCGram creates.
+The icon is decoration and never costs a topic. If the icon list cannot be fetched, or the chat refuses a custom icon — a private-chat forum may — the topic is created with the random colour alone, and that chat is not offered a custom icon again for the rest of the run. Topics you create by hand in Telegram keep whatever icon you picked; this flag only governs the ones CCGram creates. Set `CCGRAM_TOPIC_RANDOM_ICON=false` to give those Telegram's default icon too.
 
 ## Topics On Demand
 

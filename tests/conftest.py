@@ -34,6 +34,9 @@ for _key in list(os.environ):
 os.environ["TELEGRAM_BOT_TOKEN"] = "test:0000000000:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 os.environ["ALLOWED_USERS"] = "12345"
 os.environ["CCGRAM_DIR"] = tempfile.mkdtemp(prefix="ccgram-test-")
+# Random topic icons default to on; the suite asserts upstream-exact
+# createForumTopic calls, and the icon tests switch the flag on themselves.
+os.environ["CCGRAM_TOPIC_RANDOM_ICON"] = "false"
 
 
 @pytest.fixture(autouse=True)

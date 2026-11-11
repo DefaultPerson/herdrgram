@@ -317,13 +317,13 @@ class Config:
             "CCGRAM_MUX_RENAME_FROM_TELEGRAM", "true"
         ).lower() not in ("0", "false", "no")
         # Upstream creates every topic with Telegram's default icon, so a chat
-        # of agent topics is one grey column. CCGRAM_TOPIC_RANDOM_ICON=true
-        # gives each topic CCGram creates a random icon from
+        # of agent topics is one grey column. CCGRAM_TOPIC_RANDOM_ICON (on by
+        # default) gives each topic CCGram creates a random icon from
         # getForumTopicIconStickers and a random colour, purely to tell them
-        # apart at a glance.
+        # apart at a glance; =false keeps the upstream default icon.
         self.topic_random_icon: bool = os.getenv(
-            "CCGRAM_TOPIC_RANDOM_ICON", ""
-        ).lower() in ("1", "true", "yes")
+            "CCGRAM_TOPIC_RANDOM_ICON", "true"
+        ).lower() not in ("0", "false", "no", "off")
         # herdr topic titles. "full" (default) keeps the upstream
         # "<Provider> ▸ <workspace> ▸ <tab> ▸ <pane>" label; "tab" uses the
         # herdr tab label on its own, so a topic reads exactly like the herdr
